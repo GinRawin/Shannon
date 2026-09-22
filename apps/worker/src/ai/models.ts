@@ -40,6 +40,7 @@ import path from 'node:path';
 import type { Api, Credential, CredentialInfo, CredentialStore, Model } from '@earendil-works/pi-ai';
 import { getAgentDir, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { MODELS_CONFIG_PATH } from '../paths.js';
+import { applyLlmRequestRateLimit } from './request-rate-limiter.js';
 
 /**
  * Providers Shannon curates with their own credential variables, config sections,
@@ -245,9 +246,11 @@ export async function createModelRuntime(providerId: string, apiKey: string | un
   };
 
   if (piAuthPresent()) {
-    return ModelRuntime.create({ ...modelSources, authPath: piAuthPath() });
+    return applyLlmRequestRateLimit(await ModelRuntime.create({ ...modelSources, authPath: piAuthPath() }));
   }
-  return ModelRuntime.create({ ...modelSources, credentials: new RuntimeCredentialStore(providerId, apiKey) });
+  return applyLlmRequestRateLimit(
+    await ModelRuntime.create({ ...modelSources, credentials: new RuntimeCredentialStore(providerId, apiKey) }),
+  );
 }
 
 export interface ModelSelection {

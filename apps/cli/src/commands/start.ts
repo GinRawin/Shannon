@@ -40,6 +40,7 @@ export interface StartArgs {
   repo: string;
   config?: string;
   modelsConfig?: string;
+  maxLlmRequestsPerMinute?: number;
   workspace?: string;
   output?: string;
   pipelineTesting: boolean;
@@ -331,6 +332,9 @@ export async function start(args: StartArgs): Promise<void> {
     envFlags: buildEnvFlags(),
     ...(config && { config }),
     ...(modelsConfig && { modelsConfig }),
+    ...(args.maxLlmRequestsPerMinute !== undefined && {
+      maxLlmRequestsPerMinute: args.maxLlmRequestsPerMinute,
+    }),
     ...(promptsDir && { promptsDir }),
     ...(outputDir && { outputDir }),
     workspace,
@@ -652,6 +656,9 @@ function printInfo(args: StartArgs, workspace: string, repoPath: string, workspa
   }
   if (args.pipelineTesting) {
     console.log('  Mode:       Pipeline Testing');
+  }
+  if (args.maxLlmRequestsPerMinute !== undefined) {
+    console.log(`  LLM limit:  ${args.maxLlmRequestsPerMinute} requests/minute`);
   }
 
   const spec = resolveModelSpec();

@@ -122,6 +122,9 @@ npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w q1-audit
 # Stream the log until the scan finishes, then exit on its outcome (useful in CI).
 npx @keygraph/shannon start -u https://example.com -r /path/to/repo --follow
 
+# Pace all model request starts across agents (10 requests per minute).
+npx @keygraph/shannon start -u https://example.com -r /path/to/repo --max-llm-requests-per-minute 10
+
 # List running and completed scans.
 npx @keygraph/shannon scans
 ```
@@ -134,11 +137,19 @@ Source-build examples:
 ./shannon start -u https://example.com -r /path/to/repo -o ./my-reports
 ./shannon start -u https://example.com -r /path/to/repo -w q1-audit
 ./shannon start -u https://example.com -r /path/to/repo --follow
+./shannon start -u https://example.com -r /path/to/repo --max-llm-requests-per-minute 10
 ./shannon scans
 
 # Rebuild the worker image.
 ./shannon build --no-cache
 ```
+
+`--max-llm-requests-per-minute` accepts a positive integer. The limit is global to one scan worker:
+top-level agents, delegated agents, credential preflight, and structured model calls share it. Request
+starts are evenly spaced rather than released in bursts; a value of `10` starts at most one model call
+every six seconds. Provider-level retries are disabled while the limiter is active so retry attempts cannot
+bypass the queue; retryable work returns through Shannon's bounded workflow retry path. Omit the option to
+preserve the default unrestricted behavior.
 
 ## Output and Results
 

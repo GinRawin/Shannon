@@ -407,6 +407,7 @@ export interface WorkerOptions {
   envFlags: string[];
   config?: { hostPath: string; containerPath: string };
   modelsConfig?: { hostPath: string; containerPath: string };
+  maxLlmRequestsPerMinute?: number;
   promptsDir?: string;
   outputDir?: string;
   workspace: string;
@@ -510,6 +511,9 @@ export function spawnWorker(opts: WorkerOptions): ChildProcess {
   args.push('--workspace', opts.workspace);
   if (opts.pipelineTesting) {
     args.push('--pipeline-testing');
+  }
+  if (opts.maxLlmRequestsPerMinute !== undefined) {
+    args.push('--max-llm-requests-per-minute', String(opts.maxLlmRequestsPerMinute));
   }
 
   // Inherit stderr so `docker run` daemon errors surface to the user;

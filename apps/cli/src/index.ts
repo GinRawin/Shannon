@@ -184,6 +184,7 @@ interface ParsedStartArgs {
   repo: string;
   config?: string;
   modelsConfig?: string;
+  maxLlmRequestsPerMinute?: number;
   workspace?: string;
   output?: string;
   pipelineTesting: boolean;
@@ -198,6 +199,7 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
       repo: ['-r', '--repo'],
       config: ['-c', '--config'],
       modelsConfig: ['--models-config'],
+      maxLlmRequestsPerMinute: ['--max-llm-requests-per-minute'],
       output: ['-o', '--output'],
       workspace: ['-w', '--workspace'],
     },
@@ -220,6 +222,14 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
     failUsage(`invalid --url: ${url}`);
   }
 
+  let maxLlmRequestsPerMinute: number | undefined;
+  if (values.maxLlmRequestsPerMinute !== undefined) {
+    maxLlmRequestsPerMinute = Number(values.maxLlmRequestsPerMinute);
+    if (!Number.isSafeInteger(maxLlmRequestsPerMinute) || maxLlmRequestsPerMinute <= 0) {
+      failUsage('--max-llm-requests-per-minute must be a positive integer');
+    }
+  }
+
   return {
     url,
     repo,
@@ -228,6 +238,7 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
     follow: !!flags.follow,
     ...(values.config && { config: values.config }),
     ...(values.modelsConfig && { modelsConfig: values.modelsConfig }),
+    ...(maxLlmRequestsPerMinute !== undefined && { maxLlmRequestsPerMinute }),
     ...(values.workspace && { workspace: values.workspace }),
     ...(values.output && { output: values.output }),
   };

@@ -151,6 +151,15 @@ npx @keygraph/shannon@latest start \
   -r /path/to/your/repo
 ```
 
+For providers with a strict requests-per-minute quota, pace model calls globally across the scan:
+
+```bash
+npx @keygraph/shannon@latest start \
+  -u https://your-app.com \
+  -r /path/to/your/repo \
+  --max-llm-requests-per-minute 10
+```
+
 Shannon pulls the worker image from Docker Hub, starts the required local infrastructure, mounts the target repository read-only inside an ephemeral worker container, and writes results to a local workspace.
 
 For source builds, authenticated scans, provider-specific setup, and platform notes, see [Documentation](#documentation).

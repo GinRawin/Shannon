@@ -22,6 +22,7 @@
  *   --config <path>        Configuration file path
  *   --output <path>        Stable mounted path for final customer report copies
  *   --workspace <name>     Resume from existing workspace
+ *   --max-llm-requests-per-minute <count>  Globally pace model request starts
  *   --pipeline-testing     Use minimal prompts for fast testing
  *
  * Environment:
@@ -35,6 +36,7 @@ import { Client, Connection, type WorkflowHandle, WorkflowNotFoundError } from '
 import { bundleWorkflowCode, NativeConnection, Worker } from '@temporalio/worker';
 import dotenv from 'dotenv';
 import { DEFAULT_MODEL_SPEC } from '../ai/models.js';
+import { configureLlmRequestRateLimit } from '../ai/request-rate-limiter.js';
 import { capellaTerminalStageLabel, isCapellaSafeFailureMessage } from '../ai/sast/capella/safe-failures.js';
 import { capellaActivities, mergeActivityRegistries } from '../ai/sast/capella/temporal/registry.js';
 import { CAPELLA_FORMAT_VERSION, CAPELLA_PROMPT_SET_VERSION } from '../ai/sast/capella/types.js';
@@ -246,6 +248,7 @@ interface CliArgs {
   workflowId?: string;
   configPath?: string;
   customerOutputPath?: string;
+  maxLlmRequestsPerMinute?: number;
   pipelineTestingMode: boolean;
   resumeFromWorkspace?: string;
 }
@@ -261,6 +264,7 @@ function showUsage(): void {
   console.log('  --config <path>        Configuration file path');
   console.log('  --workspace <name>     Resume from existing workspace');
   console.log('  --output <path>        Stable mounted path for final customer report copies');
+  console.log('  --max-llm-requests-per-minute <count>  Globally pace model request starts');
   console.log('  --pipeline-testing     Use minimal prompts for fast testing\n');
 }
 
@@ -276,6 +280,7 @@ function parseCliArgs(argv: string[]): CliArgs {
   let workflowId: string | undefined;
   let configPath: string | undefined;
   let customerOutputPath: string | undefined;
+  let maxLlmRequestsPerMinute: number | undefined;
   let pipelineTestingMode = false;
   let resumeFromWorkspace: string | undefined;
 
@@ -311,6 +316,14 @@ function parseCliArgs(argv: string[]): CliArgs {
         resumeFromWorkspace = nextArg;
         i++;
       }
+    } else if (arg === '--max-llm-requests-per-minute') {
+      const nextArg = argv[i + 1];
+      const parsed = nextArg === undefined ? Number.NaN : Number(nextArg);
+      if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+        throw new Error('--max-llm-requests-per-minute must be a positive integer');
+      }
+      maxLlmRequestsPerMinute = parsed;
+      i++;
     } else if (arg === '--pipeline-testing') {
       pipelineTestingMode = true;
     } else if (arg && !arg.startsWith('-')) {
@@ -342,6 +355,7 @@ function parseCliArgs(argv: string[]): CliArgs {
     pipelineTestingMode,
     ...(configPath && { configPath }),
     ...(customerOutputPath && { customerOutputPath }),
+    ...(maxLlmRequestsPerMinute !== undefined && { maxLlmRequestsPerMinute }),
     ...(resumeFromWorkspace && { resumeFromWorkspace }),
   };
 }
@@ -753,6 +767,13 @@ async function startScan(client: Client, connection: NativeConnection, args: Cli
 async function run(): Promise<void> {
   // 1. Parse CLI args
   const args = parseCliArgs(process.argv.slice(2));
+  configureLlmRequestRateLimit(args.maxLlmRequestsPerMinute);
+  if (args.maxLlmRequestsPerMinute !== undefined) {
+    const intervalSeconds = 60 / args.maxLlmRequestsPerMinute;
+    console.log(
+      `LLM request pacing enabled: ${args.maxLlmRequestsPerMinute}/minute (one start every ${intervalSeconds.toFixed(1)}s)`,
+    );
+  }
 
   // 2. Connect to Temporal server
   const address = process.env.TEMPORAL_ADDRESS || 'localhost:7233';

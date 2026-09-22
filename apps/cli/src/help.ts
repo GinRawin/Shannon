@@ -30,6 +30,7 @@ export const START_OPTIONS: readonly (readonly [string, string])[] = [
   ['-r, --repo <path>', 'Repository path (required)'],
   ['-c, --config <path>', 'Configuration file (YAML)'],
   ['--models-config <path>', "pi model config (models.json) defining models pi's catalogue lacks"],
+  ['--max-llm-requests-per-minute <count>', 'Globally pace model request starts (positive integer)'],
   ['-o, --output <path>', 'Copy deliverables to this directory after the run'],
   ['-w, --workspace <name>', 'Named workspace (auto-resumes if it exists)'],
   ['-f, --follow', 'Stream the scan log until it finishes'],
