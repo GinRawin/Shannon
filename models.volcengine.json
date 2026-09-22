@@ -1,0 +1,34 @@
+  {
+    "providers": {
+      "volcengine": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "ep-20260921205410-m6s4d",
+            "name": "Volcengine Ark",
+            "reasoning": false,
+            "input": ["text"],
+            "contextWindow": 128000,
+            "maxTokens": 16384,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "supportsStore": false,
+              "supportsDeveloperRole": false,
+              "supportsReasoningEffort": false,
+              "supportsUsageInStreaming": true,
+              "supportsStrictMode": false,
+              "maxTokensField": "max_tokens",
+              "sendSessionAffinityHeaders": false,
+              "supportsLongCacheRetention": false
+            }
+          }
+        ]
+      }
+    }
+  }

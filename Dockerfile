@@ -80,13 +80,25 @@ RUN apk update && apk add --no-cache \
 
 # Install Typst (report PDF compilation)
 ARG TYPST_VERSION=0.14.2
+ARG TYPST_MIRROR_BASE_URL=https://gh-proxy.org/https://github.com/typst/typst/releases/download
+ARG TYPST_FALLBACK_BASE_URL=https://github.com/typst/typst/releases/download
 RUN case "$(uname -m)" in \
       x86_64) TYPST_ARCH=x86_64-unknown-linux-musl ;; \
       aarch64) TYPST_ARCH=aarch64-unknown-linux-musl ;; \
       *) echo "unsupported arch $(uname -m)" && exit 1 ;; \
     esac && \
     mkdir -p /tmp/typst-dl /usr/local/bin && cd /tmp/typst-dl && \
-    curl -fsSL "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-${TYPST_ARCH}.tar.xz" -o typst.tar.xz && \
+    TYPST_FILE="typst-${TYPST_ARCH}.tar.xz" && \
+    TYPST_MIRROR_URL="${TYPST_MIRROR_BASE_URL}/v${TYPST_VERSION}/${TYPST_FILE}" && \
+    TYPST_FALLBACK_URL="${TYPST_FALLBACK_BASE_URL}/v${TYPST_VERSION}/${TYPST_FILE}" && \
+    if ! (curl -fL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 300 \
+      "${TYPST_MIRROR_URL}" -o typst.tar.xz && xz -t typst.tar.xz); then \
+      echo "Typst mirror unavailable, falling back to GitHub" && \
+      rm -f typst.tar.xz && \
+      curl -fL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 300 \
+        "${TYPST_FALLBACK_URL}" -o typst.tar.xz && \
+      xz -t typst.tar.xz; \
+    fi && \
     xz -d typst.tar.xz && \
     tar -xf typst.tar && \
     mv "typst-${TYPST_ARCH}/typst" /usr/local/bin/typst && \
