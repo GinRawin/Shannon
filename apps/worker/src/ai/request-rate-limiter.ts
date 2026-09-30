@@ -5,18 +5,26 @@
 // as published by the Free Software Foundation.
 
 /**
- * Process-wide pacing for billable model requests.
+ * Process-wide pacing and 429 recovery for billable model requests.
  *
  * A scan can run many Temporal activities and pi sub-agents concurrently, but they
  * all live in one worker process. Every ModelRuntime created by that process is
  * therefore wrapped with the same limiter. Requests are evenly spaced instead of
  * released in a burst: at 10 RPM, starts are at least six seconds apart.
+ *
+ * A provider 429 also opens one process-wide exponential backoff window. That is
+ * important when several agents share a low RPM allowance: without a shared window,
+ * every in-flight session independently retries and creates another burst as soon as
+ * its short SDK delay expires. Provider retries still happen in-session, but every
+ * retry passes through this boundary before another HTTP request starts.
  */
 
 import { lazyStream } from '@earendil-works/pi-ai';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 
 const MINUTE_MS = 60_000;
+const DEFAULT_429_BACKOFF_BASE_MS = 15_000;
+const MAX_429_BACKOFF_MS = 5 * MINUTE_MS;
 
 interface QueuedRequest {
   readonly resolve: () => void;
@@ -98,9 +106,155 @@ export class LlmRequestRateLimiter {
 
 let processLimiter: LlmRequestRateLimiter | undefined;
 
+function abortableDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      try {
+        signal?.throwIfAborted();
+      } catch (reason) {
+        reject(reason);
+      }
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function retryAfterMs(headers: Headers, now: number): number | undefined {
+  const milliseconds = headers.get('retry-after-ms');
+  if (milliseconds !== null) {
+    const parsed = Number.parseFloat(milliseconds);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+
+  const retryAfter = headers.get('retry-after');
+  if (retryAfter === null) return undefined;
+  const seconds = Number.parseFloat(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(retryAfter);
+  return Number.isFinite(date) && date > now ? date - now : undefined;
+}
+
+/**
+ * One recovery gate shared by all model runtimes in the worker.
+ *
+ * The generation token prevents an older concurrent success from clearing a newer
+ * 429. A request that starts after the current cooldown and succeeds resets the
+ * exponent; requests already in flight when the 429 arrived cannot do so.
+ */
+export class Llm429Backoff {
+  private consecutive429s = 0;
+  private blockedUntil = 0;
+  private generation = 0;
+
+  constructor(
+    readonly baseDelayMs: number = DEFAULT_429_BACKOFF_BASE_MS,
+    readonly maxDelayMs: number = MAX_429_BACKOFF_MS,
+  ) {
+    if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0) {
+      throw new Error('429 backoff base delay must be positive');
+    }
+    if (!Number.isFinite(maxDelayMs) || maxDelayMs < baseDelayMs) {
+      throw new Error('429 backoff maximum delay must be at least the base delay');
+    }
+  }
+
+  async wait(signal?: AbortSignal): Promise<number> {
+    for (;;) {
+      signal?.throwIfAborted();
+      const delayMs = this.blockedUntil - Date.now();
+      if (delayMs <= 0) return this.generation;
+      await abortableDelay(delayMs, signal);
+      // Another concurrent 429 may have extended the window while this request slept.
+    }
+  }
+
+  observe(response: Response, requestGeneration: number): void {
+    if (response.status === 429) {
+      const now = Date.now();
+      const exponent = Math.min(this.consecutive429s, 30);
+      const exponentialDelay = Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** exponent);
+      const providerDelay = retryAfterMs(response.headers, now) ?? 0;
+      const delayMs = Math.min(this.maxDelayMs, Math.max(exponentialDelay, providerDelay));
+
+      this.consecutive429s += 1;
+      this.generation += 1;
+      this.blockedUntil = Math.max(this.blockedUntil, now + delayMs);
+      return;
+    }
+
+    if (requestGeneration === this.generation) {
+      this.consecutive429s = 0;
+      this.blockedUntil = 0;
+    }
+  }
+}
+
+let process429Backoff = new Llm429Backoff();
+
 /** Configure the one limiter shared by every model runtime in this worker. */
 export function configureLlmRequestRateLimit(requestsPerMinute: number | undefined): void {
   processLimiter = requestsPerMinute === undefined ? undefined : new LlmRequestRateLimiter(requestsPerMinute);
+  // A configured low RPM is also the safest first recovery window. With no explicit
+  // limit, use a conservative 15 seconds and grow from there.
+  const baseDelayMs = Math.max(DEFAULT_429_BACKOFF_BASE_MS, processLimiter?.intervalMs ?? 0);
+  process429Backoff = new Llm429Backoff(baseDelayMs);
+}
+
+function requestSignal(
+  input: Parameters<typeof globalThis.fetch>[0],
+  init: RequestInit | undefined,
+  fallback?: AbortSignal,
+): AbortSignal {
+  if (init?.signal) return init.signal;
+  if (input instanceof Request) return input.signal;
+  return fallback ?? new AbortController().signal;
+}
+
+function backoffFetch(
+  fetchImplementation: typeof globalThis.fetch,
+  limiter: LlmRequestRateLimiter | undefined,
+  backoff: Llm429Backoff,
+  fallbackSignal?: AbortSignal,
+  firstReservationGeneration?: number,
+): typeof globalThis.fetch {
+  // The outer runtime wrapper already reserves the first HTTP request. Provider SDK
+  // retries reuse this fetch function, so every later attempt re-enters the RPM queue.
+  // If a concurrent 429 invalidated that first reservation, reserve it again after
+  // the new cooldown rather than releasing a burst of stale reservations together.
+  let firstRequest = true;
+  return async (input, init) => {
+    const signal = requestSignal(input, init, fallbackSignal);
+    let generation = await backoff.wait(signal);
+    const hasValidFirstReservation = firstRequest && generation === firstReservationGeneration;
+    firstRequest = false;
+    if (!hasValidFirstReservation) {
+      generation = await reserveRequestStart(limiter, backoff, signal);
+    }
+    const response = await fetchImplementation(input, init);
+    backoff.observe(response, generation);
+    return response;
+  };
+}
+
+async function reserveRequestStart(
+  limiter: LlmRequestRateLimiter | undefined,
+  backoff: Llm429Backoff,
+  signal?: AbortSignal,
+): Promise<number> {
+  for (;;) {
+    const generation = await backoff.wait(signal);
+    await limiter?.acquire(signal);
+    const currentGeneration = await backoff.wait(signal);
+    if (limiter === undefined || currentGeneration === generation) return currentGeneration;
+    // The reservation was made before a concurrent 429 extended the cooldown.
+    // Discard it and enter the pacing queue again after the new window expires.
+  }
 }
 
 /**
@@ -110,24 +264,28 @@ export function configureLlmRequestRateLimit(requestsPerMinute: number | undefin
  */
 export function applyLlmRequestRateLimit(runtime: ModelRuntime): ModelRuntime {
   const limiter = processLimiter;
-  if (limiter === undefined) return runtime;
+  const backoff = process429Backoff;
 
   const originalStream = runtime.stream.bind(runtime);
   const originalStreamSimple = runtime.streamSimple.bind(runtime);
 
   runtime.stream = ((model, context, options) =>
     lazyStream(model, async () => {
-      await limiter.acquire(options?.signal);
-      // Hidden SDK retries would be extra HTTP requests that bypass this queue.
-      // Let Shannon's Temporal retry boundary re-enter through the limiter instead.
-      const limitedOptions = { ...options, maxRetries: 0 } as NonNullable<typeof options>;
+      const generation = await reserveRequestStart(limiter, backoff, options?.signal);
+      const limitedOptions = {
+        ...options,
+        fetch: backoffFetch(options?.fetch ?? globalThis.fetch, limiter, backoff, options?.signal, generation),
+      } as NonNullable<typeof options>;
       return originalStream(model, context, limitedOptions);
     })) as ModelRuntime['stream'];
 
   runtime.streamSimple = ((model, context, options) =>
     lazyStream(model, async () => {
-      await limiter.acquire(options?.signal);
-      const limitedOptions = { ...options, maxRetries: 0 } as NonNullable<typeof options>;
+      const generation = await reserveRequestStart(limiter, backoff, options?.signal);
+      const limitedOptions = {
+        ...options,
+        fetch: backoffFetch(options?.fetch ?? globalThis.fetch, limiter, backoff, options?.signal, generation),
+      } as NonNullable<typeof options>;
       return originalStreamSimple(model, context, limitedOptions);
     })) as ModelRuntime['streamSimple'];
 

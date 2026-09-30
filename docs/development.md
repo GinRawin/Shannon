@@ -147,9 +147,11 @@ Source-build examples:
 `--max-llm-requests-per-minute` accepts a positive integer. The limit is global to one scan worker:
 top-level agents, delegated agents, credential preflight, and structured model calls share it. Request
 starts are evenly spaced rather than released in bursts; a value of `10` starts at most one model call
-every six seconds. Provider-level retries are disabled while the limiter is active so retry attempts cannot
-bypass the queue; retryable work returns through Shannon's bounded workflow retry path. Omit the option to
-preserve the default unrestricted behavior.
+every six seconds. Provider-level retries pass through the same queue. A 429 opens a process-wide exponential
+backoff window (at least the configured request interval, or 15 seconds without this option), doubling up to
+five minutes and honoring a longer provider `Retry-After` value within that cap. A successful request after
+the cooldown resets the window. Omit the option to preserve unrestricted request pacing; 429 recovery remains
+enabled.
 
 ## Output and Results
 

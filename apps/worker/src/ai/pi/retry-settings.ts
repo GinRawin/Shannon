@@ -18,11 +18,13 @@
  *
  * NOTE: pi recommends keeping this at 0, since SDK-level retries consume
  * out-of-usage-limit responses before pi's classifier can mark them terminal.
- * Shannon accepts that trade for the transport-fault coverage. A two-minute
- * delay cap lets short server-directed recovery remain in the current session;
+ * Shannon accepts that trade for the transport-fault coverage. A five-minute
+ * delay cap lets low-RPM providers recover in the current session; Shannon's
+ * process-wide request gate adds an exponential 429 cooldown and incorporates
+ * server-directed recovery windows without releasing concurrent agents in a burst;
  * longer delays return to Temporal's bounded activity retry policy.
  */
 export const PI_RETRY_SETTINGS = {
   enabled: false,
-  provider: { maxRetries: 8, maxRetryDelayMs: 120_000 },
+  provider: { maxRetries: 8, maxRetryDelayMs: 300_000 },
 } as const;
