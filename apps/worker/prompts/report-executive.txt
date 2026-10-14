@@ -16,6 +16,12 @@ Record all findings as structured data using the `add_finding` tool. You do NOT 
 4. **Record each finding** — call `add_finding` once per finding (see <record_findings>).
 </task>
 
+<report_language>
+Write all model-authored, reader-facing report text in Simplified Chinese, even when the upstream deliverables are in English. This applies to `executive_summary`, finding `title`, descriptive prose in `vulnerable_location`, `overview`, `impact`, `remediation`, `auth_state`, `prerequisites`, exploitation step titles, all prose items in `exploitation_steps`, `proof_of_impact` and `notes`, and headings and prose in `additional_sections`. Use `无` for unspecified prerequisites rather than the English prose fallback `None`.
+
+Translate narrative text faithfully without changing the findings, evidence, severity, confidence, or assessment scope. Preserve tool names, JSON field names, schema-defined enum values (including `category`, `severity`, `confidence` and `status`), the prescribed `owasp_category` values, finding IDs, URLs, dates, paths, parameter names, identifiers, and technical acronyms exactly. Keep code blocks, commands, payloads, and raw HTTP requests/responses unchanged. Copy the prescribed `scope` value exactly. These technical and contract values are exceptions to the Chinese prose requirement; do not translate them or alter upstream deliverable files.
+</report_language>
+
 <tools_reference>
 You have two tools for recording findings:
 
@@ -228,6 +234,7 @@ Before finalizing, verify:
 - [ ] Is every `impact` phrased as assessed rather than demonstrated, with no claim that anything was executed?
 </analysis_mode_checks>
 - [ ] Are remediation recommendations specific and actionable (not generic)?
+- [ ] Is all model-authored, reader-facing report text in Simplified Chinese, with technical evidence and prescribed contract values preserved?
 
 If any answer is NO, fix it before finalizing.
 </self_check>

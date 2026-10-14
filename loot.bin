@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>抱歉，请求出现了问题 ！</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <style>
+        body {
+            background: #fafdff;
+        }
+
+        .tips {
+            font-size: 120px;
+            color: #0676df;
+            font-weight: bold;
+            text-shadow: -1px -1px #024d9a;
+        }
+
+        .tips1 {
+            font-size: 22px;
+            font-weight: bold;
+            color: #0377df;
+            margin: 10px 0 5px 0;
+        }
+
+        .tips2 {
+            background: #f3f3f3;
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 50px;
+            min-width: 350px;
+            color: #5d5d5d;
+            margin: 5px 0;
+            font-weight: bold;
+        }
+
+        .tips3 {
+            font-size: 12px;
+            color: #d0cbcb;
+        }
+
+        .img {
+            position: relative;
+            text-align: center;
+        }
+
+        .line {
+            background: #e5e5e5;
+            height: 5px;
+            display: inline-block;
+            width: 180px;
+            border-radius: 10px;
+            margin: 0 1px;
+        }
+
+        .line-box {
+            line-height: 15px;
+        }
+
+        .line-icon {
+            position: relative;
+            top: 6px;
+        }
+
+    </style>
+</head>
+<body>
+<div style="text-align: center">
+    <div style="margin-top: 200px;">
+        <div class="tips">400</div>
+        <div class="img">
+            <div class="line-box">
+                <span class="line" style="margin-right: 5px"></span>
+                <span class="line-icon">
+                    <svg t="1600157246095" viewBox="0 0 1098 1024" version="1.1"
+                         xmlns="http://www.w3.org/2000/svg" p-id="5661" width="40" height="40">
+                        <path d="M610.892409 345.817428C611.128433 343.63044 611.249529 341.409006 611.249529 339.159289 611.249529 305.277109 583.782594 277.810176 549.900416 277.810176 516.018238 277.810176 488.551303 305.277109 488.551303 339.159289 488.551303 339.229063 488.55142 339.298811 488.551654 339.368531L488.36115 339.368531 502.186723 631.80002C502.185201 631.957072 502.184441 632.114304 502.184441 632.271715 502.184441 658.624519 523.547611 679.98769 549.900416 679.98769 576.253221 679.98769 597.616391 658.624519 597.616391 632.271715 597.616391 631.837323 597.610587 631.404284 597.599053 630.972676L610.892409 345.817428ZM399.853166 140.941497C481.4487 1.632048 613.916208 1.930844 695.336733 140.941497L1060.013239 763.559921C1141.608773 902.869372 1076.938039 1015.801995 915.142835 1015.801995L180.047065 1015.801995C18.441814 1015.801995-46.243866 902.570576 35.176659 763.559921L399.853166 140.941497ZM549.900416 877.668165C583.782594 877.668165 611.249529 850.201231 611.249529 816.319053 611.249529 782.436871 583.782594 754.96994 549.900416 754.96994 516.018238 754.96994 488.551303 782.436871 488.551303 816.319053 488.551303 850.201231 516.018238 877.668165 549.900416 877.668165Z"
+                              p-id="5662" fill="#0676df"></path>
+                    </svg>
+                </span>
+                <span class="line" style="margin-left: 5px"></span>
+            </div>
+            <div class="line-box">
+                <span class="line" style="width: 100px"></span>
+                <span class="line" style="width: 177px"></span>
+                <span class="line" style="width: 40px"></span>
+            </div>
+            <div class="line-box">
+                <span class="line" style="width: 140px"></span>
+                <span class="line" style="width: 50px"></span>
+            </div>
+        </div>
+        <div class="tips1">抱歉，请求出现了问题 ！</div>
+        <div class="tips2">file does not exist</div>
+        <div class="tips3">0-37c3136a19c040189e9f5257b91d75bf</div>
+    </div>
+</div>
+</body>
+</html>
