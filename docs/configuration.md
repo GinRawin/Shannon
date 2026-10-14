@@ -110,6 +110,25 @@ rules:
 Every scan runs all five analysis classes: Injection, Cross-Site Scripting, Authentication, Authorization, and
 Server-Side Request Forgery. The class set is fixed and has no configuration selector.
 
+For a low model request allowance, add `--serial-vuln-analysis` to `shannon start`:
+
+```bash
+./shannon start -u https://example.com -r /path/to/repo --serial-vuln-analysis
+```
+
+This runs the five vulnerability-analysis agents one at a time. Their child tasks retain their
+existing concurrency, and exploitation scheduling is unchanged. A completed class may begin
+exploitation while the next class is being analyzed. Without the flag, analysis remains parallel.
+Classes waiting in the workflow queue do not consume their activity execution timeout.
+The flag can also be used with `-w` to resume a workspace and serialize its unfinished analyses.
+
+In production, each vulnerability-analysis activity attempt has a five-hour execution timeout,
+including time spent waiting for model request limits. Other ordinary agent activities retain
+their two-hour timeout, and pipeline-testing mode retains its thirty-minute timeout. The analysis
+heartbeat timeout remains sixty minutes; regular activity heartbeats keep it alive while agents
+wait for model requests. These defaults are set in `apps/worker/src/temporal/workflows.ts` and
+require rebuilding the worker image and starting or resuming a scan to take effect.
+
 Agentic static analysis is opt-in:
 
 ```yaml

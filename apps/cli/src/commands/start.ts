@@ -44,6 +44,7 @@ export interface StartArgs {
   workspace?: string;
   output?: string;
   pipelineTesting: boolean;
+  serialVulnAnalysis?: boolean;
   keepContainer: boolean;
   follow: boolean;
   version: string;
@@ -339,6 +340,7 @@ export async function start(args: StartArgs): Promise<void> {
     ...(outputDir && { outputDir }),
     workspace,
     ...(args.pipelineTesting && { pipelineTesting: true }),
+    ...(args.serialVulnAnalysis && { serialVulnAnalysis: true }),
     ...(args.keepContainer && { keepContainer: true }),
     ...(shouldUsePiAuth() && { piAuthHostPath: resolveHostPiAuthPath() }),
   });
@@ -659,6 +661,9 @@ function printInfo(args: StartArgs, workspace: string, repoPath: string, workspa
   }
   if (args.maxLlmRequestsPerMinute !== undefined) {
     console.log(`  LLM limit:  ${args.maxLlmRequestsPerMinute} requests/minute`);
+  }
+  if (args.serialVulnAnalysis) {
+    console.log('  Analysis:   five vulnerability analyses run sequentially');
   }
 
   const spec = resolveModelSpec();

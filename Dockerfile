@@ -53,6 +53,9 @@ RUN apk update && apk add --no-cache \
     git \
     bash \
     curl \
+    # Pi's grep/find tools must work without downloading binaries at scan time
+    ripgrep \
+    fd \
     ca-certificates \
     shadow \
     # Typst tarball decompression

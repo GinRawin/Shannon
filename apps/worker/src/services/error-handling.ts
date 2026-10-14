@@ -5,6 +5,7 @@
 // as published by the Free Software Foundation.
 
 import { type AssistantMessage, isContextOverflow, isRetryableAssistantError } from '@earendil-works/pi-ai';
+import { isTpmRateLimitBody, serializedProviderError } from '../ai/provider-rate-limit.js';
 import {
   ErrorCode,
   type PentestErrorContext,
@@ -16,13 +17,14 @@ import {
 
 // The provider boundary answers two independent questions and never lets one decide the other:
 //
-//   - Retryability: no Shannon-owned parser decides this. A typed PentestError keeps its own
+//   - Retryability: an explicit structured TPM-limit code is transient. A typed PentestError keeps its own
 //     verdict, context overflow is terminal, a genuinely-thrown SDK error with structured
 //     status/headers mirrors pi's request-layer policy, and every other (flattened) failure
 //     defers to pi's own isRetryableAssistantError helper.
 //   - Category: an observational label emitted only from reliable positive evidence — a preserved
-//     category, a typed PentestError, the context-overflow check, or structured status. It is
-//     never guessed from free text and never derived from the retry boolean.
+//     category, a typed PentestError, the context-overflow check, structured status, or
+//     the SDK's exact serialized HTTP/JSON envelope. It is never guessed from
+//     free-text keywords or derived from the retry boolean.
 //
 // The matched provider text is always discarded and replaced with the fixed
 // PROVIDER_FAILURE_MESSAGES entry, so raw provider responses never reach durable state or output.
@@ -94,7 +96,7 @@ export function handlePromptError(promptName: string, error: Error): PromptError
  * Whether a failed agent attempt is worth retrying.
  *
  * Uniform across every caller: the same retry rule decides preflight, ordinary agents,
- * task formation, SAST enrichment, and Capella. No provider text is parsed here.
+ * task formation, SAST enrichment, and Capella. Only explicit JSON TPM codes are recovered from serialized errors.
  */
 export function isRetryableFailure(error: unknown): boolean {
   return isProviderRetryable(error);
@@ -227,6 +229,7 @@ export function isProviderRetryable(error: unknown, contextWindow?: number): boo
   }
   const text = providerFailureText(error);
   if (isProviderOverflow(error, text, contextWindow)) return false;
+  if (isTpmRateLimitBody(serializedProviderError(error)?.body)) return true;
   const header = structuredRetryHeader(error);
   if (header !== undefined) return header;
   const status = structuredProviderStatus(error);
@@ -262,6 +265,7 @@ export function providerCategory(error: unknown, contextWindow?: number): Provid
   }
   const text = providerFailureText(error);
   if (isProviderOverflow(error, text, contextWindow)) return 'context_limit';
+  if (isTpmRateLimitBody(serializedProviderError(error)?.body)) return 'rate_limit';
   const status = structuredProviderStatus(error);
   if (status !== undefined) {
     const category = categoryForProviderStatus(status);

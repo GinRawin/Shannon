@@ -282,12 +282,19 @@ export async function runPiPrompt(
   // Accumulates usage from in-process `task` child sessions so the parent's reported
   // cost includes sub-agent spend (their getSessionStats is separate from ours).
   const childUsage: ChildUsage = { cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  let pendingError: PentestError | null = null;
+  // Keep a child's provider evidence as well as a top-level failed turn's details.
+  let pendingProviderDetails: SafeProviderTurnDetails | null = null;
   const customTools: ToolDefinition[] = [
     createTaskTool({
       model: selection.model,
       modelRuntime: selection.modelRuntime,
       cwd: sourceDir,
       parentAgentName,
+      onFailure: (error, details) => {
+        pendingError ??= error;
+        pendingProviderDetails ??= details ?? null;
+      },
       ...(workflowLogPath !== undefined && { workflowLogPath }),
       ...(traceEmitter !== undefined && {
         onDelegationStart: (child: string) => traceEmitter.delegationStart(child),
@@ -311,10 +318,6 @@ export async function runPiPrompt(
   const tools = [...BUILTIN_TOOLS, ...customTools.map((t) => t.name)];
 
   let turnCount = 0;
-  let pendingError: PentestError | null = null;
-  // Bounded, non-sensitive facts about the failed turn, captured alongside pendingError so the
-  // error log can distinguish a safeguard/refusal from a transport or tool-call lifecycle fault.
-  let pendingProviderDetails: SafeProviderTurnDetails | null = null;
   // Declared out here so the catch can bill spend accrued before a failure.
   let session: AgentSession | undefined;
 

@@ -55,6 +55,7 @@ import {
 } from '../types/run-state.js';
 import type * as activities from './activities.js';
 import type { ActivityInput } from './activities.js';
+import { createAnalysisScheduler } from './analysis-scheduler.js';
 import {
   isAcceptedTaskFormationFallbackReason,
   RECONCILIATION_ACTIVITY_PROFILES,
@@ -113,6 +114,20 @@ const TESTING_RETRY = {
 
 const acts = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 hours',
+  heartbeatTimeout: '60 minutes',
+  retry: PRODUCTION_RETRY,
+  cancellationType: ActivityCancellationType.TRY_CANCEL,
+});
+
+// Analysis can spend substantial time waiting for the shared model request budget.
+// Give each analysis attempt five hours without extending other agent activities.
+const vulnAnalysisActs = proxyActivities<
+  Pick<
+    typeof activities,
+    'runInjectionVulnAgent' | 'runXssVulnAgent' | 'runAuthVulnAgent' | 'runAuthzVulnAgent' | 'runSsrfVulnAgent'
+  >
+>({
+  startToCloseTimeout: '5 hours',
   heartbeatTimeout: '60 minutes',
   retry: PRODUCTION_RETRY,
   cancellationType: ActivityCancellationType.TRY_CANCEL,
@@ -378,6 +393,7 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
 
   const { workflowId } = workflowInfo();
   const a = input.pipelineTestingMode ? testActs : acts;
+  const vulnAnalysis = input.pipelineTestingMode ? testActs : vulnAnalysisActs;
   const exploit = input.exploit ?? true;
   const sessionId = input.sessionId || input.resumeFromWorkspace || workflowId;
   const stateContext: 'fresh' | 'resume' = input.resumeFromWorkspace ? 'resume' : 'fresh';
@@ -695,6 +711,8 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     });
   }
 
+  const scheduleVulnerabilityAnalysis = createAnalysisScheduler(input.serialVulnAnalysis ?? false);
+
   function buildPipelineConfigs(): Array<{
     vulnType: VulnType;
     runVuln: () => Promise<AgentMetrics>;
@@ -703,27 +721,27 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     return [
       {
         vulnType: 'injection',
-        runVuln: () => a.runInjectionVulnAgent(activityInput),
+        runVuln: () => vulnAnalysis.runInjectionVulnAgent(activityInput),
         runExploit: () => a.runInjectionExploitAgent(activityInput),
       },
       {
         vulnType: 'xss',
-        runVuln: () => a.runXssVulnAgent(activityInput),
+        runVuln: () => vulnAnalysis.runXssVulnAgent(activityInput),
         runExploit: () => a.runXssExploitAgent(activityInput),
       },
       {
         vulnType: 'auth',
-        runVuln: () => a.runAuthVulnAgent(activityInput),
+        runVuln: () => vulnAnalysis.runAuthVulnAgent(activityInput),
         runExploit: () => a.runAuthExploitAgent(activityInput),
       },
       {
         vulnType: 'authz',
-        runVuln: () => a.runAuthzVulnAgent(activityInput),
+        runVuln: () => vulnAnalysis.runAuthzVulnAgent(activityInput),
         runExploit: () => a.runAuthzExploitAgent(activityInput),
       },
       {
         vulnType: 'ssrf',
-        runVuln: () => a.runSsrfVulnAgent(activityInput),
+        runVuln: () => vulnAnalysis.runSsrfVulnAgent(activityInput),
         runExploit: () => a.runSsrfExploitAgent(activityInput),
       },
     ];
@@ -752,7 +770,7 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
       if (shouldSkip(vulnAgentName)) {
         markCompleted(vulnAgentName);
       } else {
-        vulnMetrics = await runVulnAgent();
+        vulnMetrics = await scheduleVulnerabilityAnalysis(runVulnAgent);
         state.agentMetrics[vulnAgentName] = vulnMetrics;
         markCompleted(vulnAgentName);
         if (input.checkpointsEnabled)

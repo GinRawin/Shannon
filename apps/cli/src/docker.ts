@@ -412,6 +412,7 @@ export interface WorkerOptions {
   outputDir?: string;
   workspace: string;
   pipelineTesting?: boolean;
+  serialVulnAnalysis?: boolean;
   keepContainer?: boolean;
   piAuthHostPath?: string;
 }
@@ -511,6 +512,9 @@ export function spawnWorker(opts: WorkerOptions): ChildProcess {
   args.push('--workspace', opts.workspace);
   if (opts.pipelineTesting) {
     args.push('--pipeline-testing');
+  }
+  if (opts.serialVulnAnalysis) {
+    args.push('--serial-vuln-analysis');
   }
   if (opts.maxLlmRequestsPerMinute !== undefined) {
     args.push('--max-llm-requests-per-minute', String(opts.maxLlmRequestsPerMinute));

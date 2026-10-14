@@ -18,8 +18,11 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { type LoggableAgentName, normalizeSemanticLabel } from '../../audit/safe-fields.js';
+import { classifyProviderFailure, PentestError } from '../../services/error-handling.js';
+import { ErrorCode } from '../../types/errors.js';
 import { PI_RETRY_SETTINGS } from './retry-settings.js';
 import { TraceEmitter } from './trace-emitter.js';
+import { providerTurnError, type SafeProviderTurnDetails, safeProviderTurnDetails } from './turn-error.js';
 
 export interface TaskToolContext {
   readonly cwd: string;
@@ -30,6 +33,8 @@ export interface TaskToolContext {
   readonly parentAgentName: LoggableAgentName;
   readonly workflowLogPath?: string | undefined;
   readonly onDelegationStart?: ((child: string) => Promise<void>) | undefined;
+  /** A failed child must also fail its parent attempt rather than produce a successful partial report. */
+  readonly onFailure?: (error: PentestError, details?: SafeProviderTurnDetails) => void;
   readonly cancellationSignal?: AbortSignal | undefined;
   readonly onUsage?: (usage: {
     readonly cost: number;
@@ -49,6 +54,14 @@ const CHILD_CANCELLED_TEXT = '[Sub-agent task was cancelled]';
 
 function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }], details: undefined };
+}
+
+function childTaskError(error: unknown): PentestError {
+  if (error instanceof PentestError) return error;
+  const failure = classifyProviderFailure(error);
+  const result = new PentestError(failure.message, 'unknown', failure.retryable, {}, ErrorCode.AGENT_EXECUTION_FAILED);
+  result.providerCategory = failure.category;
+  return result;
 }
 
 /**
@@ -120,6 +133,9 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
       let operations = 0;
       let failed = false;
       let fatalFailure = false;
+      let providerFailure: SafeProviderTurnDetails | undefined;
+      let compactionFailed = false;
+      let executionFailure: PentestError | undefined;
 
       const abortChildSession = (): void => {
         void subSession?.abort().catch(() => {
@@ -151,6 +167,18 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
         }
 
         subSession.subscribe((event) => {
+          if (event.type === 'compaction_end' && !event.aborted && !event.willRetry && event.errorMessage) {
+            compactionFailed = true;
+            failed = true;
+            executionFailure = new PentestError(
+              'Child context compaction failed.',
+              'unknown',
+              true,
+              {},
+              ErrorCode.AGENT_EXECUTION_FAILED,
+            );
+            return;
+          }
           if (event.type === 'tool_execution_start') {
             operations += 1;
             emitter?.toolStart(event.toolCallId, event.toolName, event.args);
@@ -163,6 +191,10 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
           if (event.type !== 'turn_end') return;
           turns += 1;
           const message = event.message as AssistantMessage | undefined;
+          if (message?.role === 'assistant' && message.stopReason === 'error') {
+            providerFailure = safeProviderTurnDetails(message, config.model.contextWindow);
+            executionFailure = providerTurnError(message, 'Child agent error', config.model.contextWindow);
+          }
           for (const block of message?.content ?? []) {
             if (block.type === 'text' && block.text) {
               resultText += (resultText ? '\n' : '') + block.text;
@@ -173,10 +205,14 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
 
         try {
           await subSession.prompt(params.prompt);
-        } catch {
+        } catch (error) {
           failed = true;
+          executionFailure ??= childTaskError(error);
         }
-        if (subSession.state.errorMessage !== undefined) failed = true;
+        if (subSession.state.errorMessage !== undefined) {
+          failed = true;
+          executionFailure ??= childTaskError(new Error(subSession.state.errorMessage));
+        }
 
         const subStats = subSession.getSessionStats();
         if (subStats.cost > subCost) subCost = subStats.cost;
@@ -187,8 +223,9 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
           cacheReadTokens: subStats.tokens.cacheRead,
           cacheWriteTokens: subStats.tokens.cacheWrite,
         });
-      } catch {
+      } catch (error) {
         fatalFailure = true;
+        executionFailure ??= childTaskError(error);
       } finally {
         config.cancellationSignal?.removeEventListener('abort', onCancellation);
         subSession?.dispose();
@@ -205,14 +242,27 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
       // as a failed tool call. `failed` means the session ran but ended in error; that gets a normal
       // text result instead, so the parent model sees the failure and can decide how to proceed.
       if (fatalFailure) {
+        console.warn('Child task failed', { child, stage: 'create-session', turns, operations });
         emitter?.sessionFailure('CHILD_TASK_FAILED', durationMs);
         await emitter?.flush();
-        throw new Error(CHILD_FAILURE_TEXT);
+        const failure = executionFailure ?? childTaskError(new Error(CHILD_FAILURE_TEXT));
+        config.onFailure?.(failure, providerFailure);
+        throw failure;
       }
       if (failed) {
+        console.warn('Child task failed', {
+          child,
+          stage: compactionFailed ? 'compaction' : 'prompt',
+          turns,
+          operations,
+          ...(providerFailure !== undefined && { providerTurn: providerFailure }),
+        });
         emitter?.sessionFailure('CHILD_TASK_FAILED', durationMs);
         await emitter?.flush();
-        return textResult(CHILD_FAILURE_TEXT);
+        const failure = executionFailure ?? childTaskError(new Error(CHILD_FAILURE_TEXT));
+        config.onFailure?.(failure, providerFailure);
+        const reason = providerFailure?.providerCategory ?? (compactionFailed ? 'compaction' : undefined);
+        return textResult(reason ? `${CHILD_FAILURE_TEXT} (${reason})` : CHILD_FAILURE_TEXT);
       }
 
       emitter?.sessionComplete(durationMs, turns, operations);

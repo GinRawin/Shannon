@@ -250,6 +250,7 @@ interface CliArgs {
   customerOutputPath?: string;
   maxLlmRequestsPerMinute?: number;
   pipelineTestingMode: boolean;
+  serialVulnAnalysis: boolean;
   resumeFromWorkspace?: string;
 }
 
@@ -265,6 +266,7 @@ function showUsage(): void {
   console.log('  --workspace <name>     Resume from existing workspace');
   console.log('  --output <path>        Stable mounted path for final customer report copies');
   console.log('  --max-llm-requests-per-minute <count>  Globally pace model request starts');
+  console.log('  --serial-vuln-analysis  Run the five vulnerability analyses one at a time');
   console.log('  --pipeline-testing     Use minimal prompts for fast testing\n');
 }
 
@@ -282,6 +284,7 @@ function parseCliArgs(argv: string[]): CliArgs {
   let customerOutputPath: string | undefined;
   let maxLlmRequestsPerMinute: number | undefined;
   let pipelineTestingMode = false;
+  let serialVulnAnalysis = false;
   let resumeFromWorkspace: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
@@ -326,6 +329,8 @@ function parseCliArgs(argv: string[]): CliArgs {
       i++;
     } else if (arg === '--pipeline-testing') {
       pipelineTestingMode = true;
+    } else if (arg === '--serial-vuln-analysis') {
+      serialVulnAnalysis = true;
     } else if (arg && !arg.startsWith('-')) {
       if (!webUrl) {
         webUrl = arg;
@@ -353,6 +358,7 @@ function parseCliArgs(argv: string[]): CliArgs {
     taskQueue,
     ...(workflowId && { workflowId }),
     pipelineTestingMode,
+    serialVulnAnalysis,
     ...(configPath && { configPath }),
     ...(customerOutputPath && { customerOutputPath }),
     ...(maxLlmRequestsPerMinute !== undefined && { maxLlmRequestsPerMinute }),
@@ -597,6 +603,7 @@ function buildPipelineInput(
     sessionId: workspace.sessionId,
     ...(args.configPath && { configPath: args.configPath }),
     ...(args.pipelineTestingMode && { pipelineTestingMode: args.pipelineTestingMode }),
+    ...(args.serialVulnAnalysis && { serialVulnAnalysis: true }),
     ...(workspace.isResume && args.resumeFromWorkspace && { resumeFromWorkspace: args.resumeFromWorkspace }),
     ...(workspace.terminatedWorkflows.length > 0 && { terminatedWorkflows: workspace.terminatedWorkflows }),
     ...(args.customerOutputPath !== undefined && { customerOutputPath: args.customerOutputPath }),

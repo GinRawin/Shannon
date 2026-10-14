@@ -21,6 +21,7 @@
 
 import { lazyStream } from '@earendil-works/pi-ai';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { isTpmRateLimitBody } from './provider-rate-limit.js';
 
 const MINUTE_MS = 60_000;
 const DEFAULT_429_BACKOFF_BASE_MS = 15_000;
@@ -174,21 +175,25 @@ export class Llm429Backoff {
     }
   }
 
-  observe(response: Response, requestGeneration: number): void {
+  observe(response: Response, requestGeneration: number, tpmLimited = false): void {
     if (response.status === 429) {
       const now = Date.now();
       const exponent = Math.min(this.consecutive429s, 30);
-      const exponentialDelay = Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** exponent);
+      // A token-per-minute bucket needs a full minute to replenish, rather than
+      // the shorter initial recovery window used for ordinary request limits.
+      const baseDelayMs = tpmLimited ? Math.max(this.baseDelayMs, MINUTE_MS) : this.baseDelayMs;
+      const exponentialDelay = Math.min(this.maxDelayMs, baseDelayMs * 2 ** exponent);
       const providerDelay = retryAfterMs(response.headers, now) ?? 0;
       const delayMs = Math.min(this.maxDelayMs, Math.max(exponentialDelay, providerDelay));
 
       this.consecutive429s += 1;
       this.generation += 1;
       this.blockedUntil = Math.max(this.blockedUntil, now + delayMs);
+      console.warn(`LLM ${tpmLimited ? 'TPM' : '429'} limit: shared cooldown ${Math.ceil(delayMs / 1000)}s`);
       return;
     }
 
-    if (requestGeneration === this.generation) {
+    if (response.ok && requestGeneration === this.generation) {
       this.consecutive429s = 0;
       this.blockedUntil = 0;
     }
@@ -237,8 +242,23 @@ function backoffFetch(
       generation = await reserveRequestStart(limiter, backoff, signal);
     }
     const response = await fetchImplementation(input, init);
-    backoff.observe(response, generation);
-    return response;
+    let tpmLimited = false;
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      // Inspect a clone so the SDK can still read the original error body.
+      try {
+        tpmLimited = isTpmRateLimitBody(await response.clone().json());
+      } catch {
+        // Malformed/non-JSON errors still use their HTTP status for recovery.
+      }
+    }
+    // Some compatible gateways keep a provider's TPM code but replace its HTTP
+    // status. Present that explicit transient error as 429 so SDK retries apply.
+    const retryResponse =
+      tpmLimited && response.status !== 429
+        ? new Response(response.body, { status: 429, statusText: 'Too Many Requests', headers: response.headers })
+        : response;
+    backoff.observe(retryResponse, generation, tpmLimited);
+    return retryResponse;
   };
 }
 

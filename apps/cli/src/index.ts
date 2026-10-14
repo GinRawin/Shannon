@@ -188,6 +188,7 @@ interface ParsedStartArgs {
   workspace?: string;
   output?: string;
   pipelineTesting: boolean;
+  serialVulnAnalysis: boolean;
   keepContainer: boolean;
   follow: boolean;
 }
@@ -205,6 +206,7 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
     },
     booleans: {
       pipelineTesting: ['--pipeline-testing'],
+      serialVulnAnalysis: ['--serial-vuln-analysis'],
       keepContainer: ['--keep-container'],
       follow: ['-f', '--follow'],
     },
@@ -234,6 +236,7 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
     url,
     repo,
     pipelineTesting: !!flags.pipelineTesting,
+    serialVulnAnalysis: !!flags.serialVulnAnalysis,
     keepContainer: !!flags.keepContainer,
     follow: !!flags.follow,
     ...(values.config && { config: values.config }),

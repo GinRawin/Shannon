@@ -93,6 +93,8 @@ export interface PipelineInput {
   repoPath: string;
   configPath?: string;
   pipelineTestingMode?: boolean;
+  /** Serialize only the five vulnerability-analysis activities; other lane work remains concurrent. */
+  serialVulnAnalysis?: boolean;
   workflowId?: string; // Used for audit correlation
   sessionId?: string; // Workspace directory name (distinct from workflowId for named workspaces)
   resumeFromWorkspace?: string; // Workspace name to resume from
