@@ -140,6 +140,8 @@ RUN mkdir -p /tmp/.claude/skills && \
 # Symlink CLI tools onto PATH
 RUN ln -s /app/apps/worker/dist/scripts/save-deliverable.js /usr/local/bin/save-deliverable && \
     chmod +x /app/apps/worker/dist/scripts/save-deliverable.js && \
+    ln -s /app/apps/worker/dist/scripts/shannon-curl.js /usr/local/bin/shannon-curl && \
+    chmod +x /app/apps/worker/dist/scripts/shannon-curl.js && \
     ln -s /app/apps/worker/dist/scripts/generate-totp.js /usr/local/bin/generate-totp && \
     chmod +x /app/apps/worker/dist/scripts/generate-totp.js && \
     ln -s /app/apps/worker/dist/scripts/set-report-meta.js /usr/local/bin/set-report-meta && \

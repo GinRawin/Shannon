@@ -477,7 +477,7 @@ export function spawnWorker(opts: WorkerOptions): ChildProcess {
     args.push('-v', `${opts.modelsConfig.hostPath}:${opts.modelsConfig.containerPath}:ro`);
   }
 
-  // Customer-copy destination. The workflow surfaces only final report artifacts here.
+  // Customer-copy destination. The workflow surfaces final reports and replay artifacts here.
   if (opts.outputDir) {
     args.push('-v', `${opts.outputDir}:/app/output`);
   }

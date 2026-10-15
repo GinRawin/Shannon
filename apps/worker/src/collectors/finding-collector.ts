@@ -208,10 +208,6 @@ function exploitOnlyFields() {
       minItems: 1,
       description: 'Ordered exploitation steps. Each step has an optional title and prose/code items.',
     }),
-    proof_of_impact: Type.Array(StepItemSchema, {
-      minItems: 1,
-      description: 'Evidence of what the exploit achieved — prose and code items.',
-    }),
     status: Type.Optional(
       Type.Union([stringEnum(STATUS_VALUES), Type.Null()], {
         description: 'Finding status. Use "exploited" for confirmed exploits.',
@@ -270,7 +266,6 @@ const AddFindingSupersetSchema = Type.Object({
   auth_state: Type.Optional(Type.String()),
   prerequisites: Type.Optional(Type.String()),
   exploitation_steps: Type.Optional(Type.Array(StructuredStepSchema)),
-  proof_of_impact: Type.Optional(Type.Array(StepItemSchema)),
   status: Type.Optional(Type.Union([stringEnum(STATUS_VALUES), Type.Null()])),
   confidence: Type.Optional(Type.Union([stringEnum(CONFIDENCE_VALUES), Type.Null()])),
   ...locationFields(),

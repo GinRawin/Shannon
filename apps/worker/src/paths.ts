@@ -30,7 +30,7 @@ export const DEFAULT_AUDIT_DIR = './workspaces';
 /**
  * Hidden subdirectory inside each run directory that holds all internals
  * (logs, prompts, session state, deliverables, browser artifacts). Keeps the
- * run folder's top level clean so only the final report is visible.
+ * run folder's top level limited to final outputs.
  */
 export const INTERNAL_DIR = '.shannon';
 
@@ -51,6 +51,9 @@ export const REPORT_JSON_FILENAME = 'report.json';
 
 /** SARIF 2.1.0 log, written for exploit=true runs unless report.sarif is set to false. */
 export const SARIF_FILENAME = 'report.sarif';
+
+/** Reproduction script generated from verified, automatically replayable exploit PoCs. */
+export const REPRODUCTION_SCRIPT_FILENAME = 'reproduce.sh';
 
 /** Deterministic receipt for the canonical report finalization commit. */
 export const REPORT_FINALIZATION_MANIFEST_FILENAME = 'report_finalization_manifest.json';

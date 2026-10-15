@@ -5,6 +5,7 @@
 // as published by the Free Software Foundation.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { $ } from 'zx';
 import type { ActivityLogger } from '../types/activity-logger.js';
@@ -548,8 +549,38 @@ export async function isAncestor(ancestor: string, descendant: string, sourceDir
 /** Read a file from `HEAD`, returning null only when the Git command cannot supply it. */
 export async function readFileFromHead(sourceDir: string, relPath: string): Promise<string | null> {
   return withGitRepoLock(async () => {
-    const result = await $`cd ${sourceDir} && git show ${`HEAD:${relPath}`}`.nothrow().quiet();
+    const result = await readHeadFileBytes(sourceDir, relPath).catch(() => null);
+    if (result === null) return null;
     return result.exitCode === 0 ? result.stdout : null;
+  });
+}
+
+/** Preserve UTF-8 characters (and a leading BOM) across subprocess output chunks. */
+async function readHeadFileBytes(
+  sourceDir: string,
+  relPath: string,
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    // zx 8 decodes chunks independently, replacing multibyte characters split across chunks.
+    // Collect raw buffers and decode once; exact-output verification must see the original text.
+    const child = spawn('git', ['show', `HEAD:${relPath}`], {
+      cwd: sourceDir,
+      // The failure classifier matches Git's English diagnostics, independent of the host locale.
+      env: { ...process.env, LC_ALL: 'C' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.once('error', reject);
+    child.once('close', (exitCode) => {
+      resolve({
+        exitCode,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      });
+    });
   });
 }
 
@@ -610,7 +641,9 @@ function transientHeadReadError(operation: string): PentestError {
  */
 export async function readCommittedFile(sourceDir: string, relPath: string): Promise<CommittedReadResult> {
   return withGitRepoLock(async () => {
-    const result = await $`cd ${sourceDir} && git show ${`HEAD:${relPath}`}`.nothrow().quiet();
+    const result = await readHeadFileBytes(sourceDir, relPath).catch(() => {
+      throw transientHeadReadError('read-committed-file');
+    });
     if (result.exitCode === 0) {
       return { state: 'present', contents: result.stdout };
     }

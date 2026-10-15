@@ -32,7 +32,7 @@ import { renderSarif } from './sarif-renderer.js';
 const FINALIZATION_SCHEMA_VERSION = 1;
 // Renderer versions feed the input fingerprint: bumping one invalidates adoption of an existing
 // finalization, forcing a re-render instead of adopting output from an older renderer.
-const REPORT_RENDERER_VERSION = '4.13.1';
+const REPORT_RENDERER_VERSION = '4.13.4';
 const SARIF_RENDERER_VERSION = '4.13.1';
 
 interface CommittedArtifactReceipt {

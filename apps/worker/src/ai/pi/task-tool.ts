@@ -30,6 +30,8 @@ export interface TaskToolContext {
   readonly model: Model<any>;
   readonly modelRuntime: ModelRuntime;
   readonly createResourceLoader: () => Promise<ResourceLoader>;
+  /** Children can capture their own validation; only the parent submits verdicts. */
+  readonly httpEvidenceTools?: ToolDefinition[] | undefined;
   readonly parentAgentName: LoggableAgentName;
   readonly workflowLogPath?: string | undefined;
   readonly onDelegationStart?: ((child: string) => Promise<void>) | undefined;
@@ -46,8 +48,8 @@ export interface TaskToolContext {
 }
 
 // Deliberately excludes `task` (no recursive delegation, so a child cannot spawn further children)
-// and every collector/submit tool (structured output stays owned by the top-level agent session
-// that the workflow reads back). A child session gets only plain file and shell access.
+// and collector/submit tools (structured verdicts stay owned by the top-level agent
+// session). HTTP evidence tools are shared so a child can capture its original proof.
 const CHILD_TOOLS = ['read', 'grep', 'find', 'ls', 'write', 'bash'];
 const CHILD_FAILURE_TEXT = '[Sub-agent task failed before completion]';
 const CHILD_CANCELLED_TEXT = '[Sub-agent task was cancelled]';
@@ -104,7 +106,7 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
     promptGuidelines: [
       'Use the task tool to delegate focused work: code review, reconnaissance, automation scripting, validation.',
       'Pass all necessary context in the "prompt" parameter — the sub-agent cannot see your conversation history.',
-      'The sub-agent can use read, grep, find, ls, write, and bash, but cannot call task or custom collector tools.',
+      'The sub-agent can use read, grep, find, ls, write, and bash, plus HTTP evidence tools when provided. It cannot call task or verdict collector tools. Tell it to return capture IDs with its proof.',
       'You can launch multiple task tool calls in a single message to run sub-tasks in parallel.',
     ],
     parameters: Type.Object({
@@ -151,7 +153,8 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
           agentDir,
           resourceLoader,
           model: config.model,
-          tools: CHILD_TOOLS,
+          tools: [...CHILD_TOOLS, ...(config.httpEvidenceTools ?? []).map((tool) => tool.name)],
+          customTools: config.httpEvidenceTools ?? [],
           modelRuntime: config.modelRuntime,
           sessionManager: SessionManager.inMemory(config.cwd),
           settingsManager: SettingsManager.inMemory({

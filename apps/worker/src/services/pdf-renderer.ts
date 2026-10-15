@@ -36,7 +36,7 @@ const DATA_FILENAME = 'data.json';
 const TEMPLATE_FILENAME = 'report.typ';
 const OUTPUT_FILENAME = 'report.pdf';
 
-export const PDF_RENDERER_VERSION = '1';
+export const PDF_RENDERER_VERSION = '3';
 
 export interface PdfProvenance {
   readonly pdf_sha256: string;

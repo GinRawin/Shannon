@@ -18,6 +18,7 @@ import { RenumberError, writeAndCommitExactFiles } from './exact-output-commit.j
 import { renderExploitDeliverable } from './exploit-renderer.js';
 import { severityRank } from './finding-order.js';
 import { readCommittedFile } from './git-manager.js';
+import { renderCapturedHttpEvidence } from './http-evidence.js';
 
 function divergence(checkCode: string, vulnerabilityClass: ReconciliationClass): never {
   throw new RenumberError('key-set-divergence', false, { checkCode, vulnerabilityClass });
@@ -66,7 +67,16 @@ function scrubEntryText(value: unknown, oldToNew: ReadonlyMap<string, string>): 
   if (Array.isArray(value)) return value.map((entry) => scrubEntryText(entry, oldToNew));
   if (value !== null && typeof value === 'object') {
     const scrubbed: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) scrubbed[key] = scrubEntryText(entry, oldToNew);
+    for (const [key, entry] of Object.entries(value)) {
+      scrubbed[key] = [
+        'reproduction_script',
+        'http_replay',
+        'http_replay_verification',
+        'http_evidence_receipts',
+      ].includes(key)
+        ? entry
+        : scrubEntryText(entry, oldToNew);
+    }
     return scrubbed;
   }
   return value;
@@ -351,7 +361,7 @@ export async function computeRenumber(
   const sparseProvenance = await loadAndValidateProvenance(dir, vulnerabilityClass, collectorReferences);
   // The renderer's empty-state banner describes an empty queue, but an empty renumbered set
   // means every queued finding failed exploitation, so the wording is corrected here.
-  const evidenceMarkdown = renderExploitDeliverable(
+  const renderedEvidence = renderExploitDeliverable(
     vulnerabilityClass,
     map.renumbered,
     new Map<string, string>(),
@@ -359,6 +369,10 @@ export async function computeRenumber(
     '*No vulnerabilities were available in the queue for exploitation.*',
     '*No vulnerabilities were confirmed during exploitation.*',
   );
+  const capturedHttpEvidence = await renderCapturedHttpEvidence(dir, vulnerabilityClass, map.oldToNew);
+  const evidenceMarkdown = capturedHttpEvidence
+    ? `${renderedEvidence.trimEnd()}\n\n${capturedHttpEvidence}`
+    : renderedEvidence;
   return {
     ...map,
     evidenceMarkdown,

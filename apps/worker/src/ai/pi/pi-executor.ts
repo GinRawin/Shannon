@@ -247,7 +247,12 @@ export async function runPiPrompt(
   //    instruction to call it lives with the tool, not in every prompt file.
   const timer = new Timer(`agent-${description.toLowerCase().replace(/\s+/g, '-')}`);
   const basePrompt = context ? `${context}\n\n${prompt}` : prompt;
-  const fullPrompt = submitTool?.directive ? basePrompt + submitTool.directive : basePrompt;
+  // Inject at execution time: live-mounted prompt files of an existing worker
+  // are deliberately left untouched. Applies only to newly built workers.
+  const evidenceDirective = callerTools?.some((tool) => tool.name === 'capture_http_request')
+    ? '\n\nHTTP evidence requirements: perform the actual HTTP proof with capture_http_request and pass its capture IDs in http_evidence_ids to add_exploit. This host tool uses the shannon-curl trace mechanism and supersedes older CLI-only capture examples. It sends and records the SAME invocation; do not repeat earlier state-changing requests merely to collect evidence. verify_http_replay also returns valid capture IDs. list_http_evidence retrieves existing IDs without network requests. Ordinary curl/browser actions are not automatically captured. If no applicable complete HTTP proof exists (such as DOM-only browser execution), provide the specific http_evidence_unavailable_reason; this limitation is disclosed in the report.\n'
+    : '';
+  const fullPrompt = (submitTool?.directive ? basePrompt + submitTool.directive : basePrompt) + evidenceDirective;
 
   // 2. Set up progress and audit infrastructure
   const execContext = detectExecutionContext(description);
@@ -266,6 +271,10 @@ export async function runPiPrompt(
     ? path.join(sourceDir, path.dirname(deliverablesSubdir), '.playwright-cli')
     : path.join(sourceDir, '.shannon', '.playwright-cli');
   if (deliverablesSubdir) process.env.SHANNON_DELIVERABLES_SUBDIR = deliverablesSubdir;
+  process.env.SHANNON_DELIVERABLES_DIR = path.join(
+    sourceDir,
+    ...(deliverablesSubdir ? deliverablesSubdir.split('/') : ['.shannon', 'deliverables']),
+  );
 
   // 4. Resolve model + auth, then assemble the tool set (universal task/todo tools
   //    plus any caller-supplied collector/submit tools).
@@ -287,6 +296,9 @@ export async function runPiPrompt(
   let pendingProviderDetails: SafeProviderTurnDetails | null = null;
   const customTools: ToolDefinition[] = [
     createTaskTool({
+      httpEvidenceTools: callerTools?.filter((tool) =>
+        ['capture_http_request', 'list_http_evidence', 'verify_http_replay'].includes(tool.name),
+      ),
       model: selection.model,
       modelRuntime: selection.modelRuntime,
       cwd: sourceDir,

@@ -544,8 +544,8 @@
     render-items(step.items)
   }
 
-  heading(level: 3, outlined: false)[Proof of Impact]
-  render-numbered-items(f.proofOfImpact)
+  heading(level: 3, outlined: false)[#inline-code(f.capturedHttpEvidence.heading)]
+  render-items(f.capturedHttpEvidence.items)
   render-remediation(f)
   render-finding-extras(f)
   v(16pt)

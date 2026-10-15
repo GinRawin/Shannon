@@ -23,6 +23,7 @@ import type {
   StructuredStep,
 } from '../collectors/finding-collector.js';
 import { orderFindings } from './finding-order.js';
+import { projectFindingEvidence } from './report-evidence.js';
 import type {
   ExploitsReportData,
   FindingsReportData,
@@ -228,30 +229,32 @@ function adaptExploitsMode(data: ReportData): ExploitsReportData {
         .filter((e) => e.count > 0),
       criticalFindings: findings.filter((f) => f.severity === 'critical').map((f) => `${f.finding_id}: ${f.title}`),
     },
-    findings: findings.map((f) => ({
-      id: f.finding_id,
-      title: f.title,
-      category: toTypstCategory(f.category),
-      severity: toTypstSeverity(f.severity),
-      owaspCategory: f.owasp_category,
-      ...(f.auth_state && { authState: f.auth_state }),
-      summary: {
-        vulnerableLocation: f.vulnerable_location,
-        overview: f.overview,
-        impact: f.impact,
-      },
-      // This branch only runs for an exploitative report, where the schema made these
-      // required. The fallbacks keep the superset type honest rather than assuming.
-      prerequisites: f.prerequisites ?? '',
-      exploitationSteps: (f.exploitation_steps ?? []).map(adaptStep),
-      proofOfImpact: (f.proof_of_impact ?? []).map(adaptStepItem),
-      remediation: f.remediation,
-      ...(f.notes && f.notes.length > 0 && { notes: f.notes.map(adaptStepItem) }),
-      ...(f.additional_sections &&
-        f.additional_sections.length > 0 && {
-          additionalSections: f.additional_sections.map(adaptAdditionalSection),
+    findings: findings.map((f) => {
+      const evidence = projectFindingEvidence(f);
+      return {
+        id: f.finding_id,
+        title: f.title,
+        category: toTypstCategory(f.category),
+        severity: toTypstSeverity(f.severity),
+        owaspCategory: f.owasp_category,
+        ...(f.auth_state && { authState: f.auth_state }),
+        summary: {
+          vulnerableLocation: f.vulnerable_location,
+          overview: f.overview,
+          impact: f.impact,
+        },
+        // This branch only runs for an exploitative report, where the schema made these
+        // required. The fallbacks keep the superset type honest rather than assuming.
+        prerequisites: f.prerequisites ?? '',
+        exploitationSteps: (f.exploitation_steps ?? []).map(adaptStep),
+        capturedHttpEvidence: adaptAdditionalSection(evidence.capturedHttpEvidence),
+        remediation: f.remediation,
+        ...(f.notes && f.notes.length > 0 && { notes: f.notes.map(adaptStepItem) }),
+        ...(evidence.additionalSections.length > 0 && {
+          additionalSections: evidence.additionalSections.map(adaptAdditionalSection),
         }),
-    })),
+      };
+    }),
     derivedCounts: {
       bySeverity: sevCounts,
       byStatus: statusCounts,

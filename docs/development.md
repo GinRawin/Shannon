@@ -162,14 +162,17 @@ Results are saved to the workspaces directory:
 
 Use `-o <path>` to copy deliverables to a custom output directory after a run completes.
 
-Output structure — the run directory's top level holds the final report, in PDF and Markdown; everything else is nested under a hidden `.shannon/` directory:
+Output structure — the run directory's top level holds the final report, replay script, and SARIF output; run internals are nested under a hidden `.shannon/` directory:
 
 ```text
 workspaces/{hostname}_{sessionId}/
 |-- Security-Assessment-Report.pdf  # the final report (PDF)
 |-- Security-Assessment-Report.md   # the final report (Markdown)
+|-- reproduce.sh                    # automatically replayable HTTP PoCs (exploit runs)
 `-- .shannon/                       # internals
     |-- deliverables/               # report source, per-phase analysis, queues
+    |   |-- http-exchanges/         # original curl traces and exact HTTP bytes
+    |   `-- http-replay-verifications/ # host execution, assertions and cleanup results
     |-- agents/                     # per-agent log projections, one file per agent/Capella stage
     |-- prompts/                    # rendered prompts
     |-- scratchpad/                 # screenshots, scripts

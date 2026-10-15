@@ -91,7 +91,7 @@ export interface ExploitFinding {
   readonly summary: FindingSummary;
   readonly prerequisites: string;
   readonly exploitationSteps: readonly Step[];
-  readonly proofOfImpact: readonly StepItem[];
+  readonly capturedHttpEvidence: AdditionalSection;
   readonly remediation: string;
   readonly notes?: readonly StepItem[];
   readonly additionalSections?: readonly AdditionalSection[];

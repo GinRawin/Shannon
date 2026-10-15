@@ -17,7 +17,7 @@ Record all findings as structured data using the `add_finding` tool. You do NOT 
 </task>
 
 <report_language>
-Write all model-authored, reader-facing report text in Simplified Chinese, even when the upstream deliverables are in English. This applies to `executive_summary`, finding `title`, descriptive prose in `vulnerable_location`, `overview`, `impact`, `remediation`, `auth_state`, `prerequisites`, exploitation step titles, all prose items in `exploitation_steps`, `proof_of_impact` and `notes`, and headings and prose in `additional_sections`. Use `无` for unspecified prerequisites rather than the English prose fallback `None`.
+Write all model-authored, reader-facing report text in Simplified Chinese, even when the upstream deliverables are in English. This applies to `executive_summary`, finding `title`, descriptive prose in `vulnerable_location`, `overview`, `impact`, `remediation`, `auth_state`, `prerequisites`, exploitation step titles, all prose items in `exploitation_steps` and `notes`, and headings and prose in `additional_sections`. Use `无` for unspecified prerequisites rather than the English prose fallback `None`.
 
 Translate narrative text faithfully without changing the findings, evidence, severity, confidence, or assessment scope. Preserve tool names, JSON field names, schema-defined enum values (including `category`, `severity`, `confidence` and `status`), the prescribed `owasp_category` values, finding IDs, URLs, dates, paths, parameter names, identifiers, and technical acronyms exactly. Keep code blocks, commands, payloads, and raw HTTP requests/responses unchanged. Copy the prescribed `scope` value exactly. These technical and contract values are exceptions to the Chinese prose requirement; do not translate them or alter upstream deliverable files.
 </report_language>
@@ -169,17 +169,18 @@ Map the finding's content from the per-class deliverable sections to `add_findin
 - `overview`: Synthesize from the finding's "Overview" field into professional prose. Do not paste verbatim.
 - `remediation`: Specific, actionable fix guidance from the finding. Code-level or configuration-level. Avoid generic advice.
 <exploit_mode_fields>
-- `impact`: From the finding's "Impact" field if present, otherwise derive from the overview and proof of impact
+- `impact`: From the finding's "Impact" field if present, otherwise derive from the overview and recorded exploitation results.
 - `auth_state`: From the finding's authentication context or prerequisites
 - `prerequisites`: From the finding's "Prerequisites" field, or `"None"` if not specified
 - `exploitation_steps`: From the finding's exploitation steps or proof-of-concept. Each step gets a title and ordered prose/code items. Use `"bash"` for shell commands, `"http"` for raw HTTP, `"json"` for response bodies.
-- `proof_of_impact`: From the finding's "Proof of Impact" or evidence section. What the exploit demonstrably achieved.
+- In exploit mode, the host joins actual captured HTTP requests and responses to each finding and adds a "捕获的 HTTP 请求与响应" section, with configured login credentials replaced by placeholders. The exploitation evidence may contain a "Captured HTTP Evidence Index" with capture counts. Do not author or duplicate the host's HTTP or "自动化重放覆盖" sections. Keep `exploitation_steps` focused on setup and interpretation. Only structured HTTP plans actually executed and checked by the host can enter reproduce.sh; a successful HTTP transport alone is not proof of reproduction.
+- Evidence in the final report consists of the host's captured HTTP requests and responses. Do not author separate evidence summaries, reconstructed transcripts, or replacement evidence sections in `notes` or `additional_sections`. If no HTTP capture is available, the host explicitly records that absence; do not fill the gap with model-authored evidence.
 - `status`: Optional. Use `"exploited"` for confirmed exploits.
 </exploit_mode_fields>
 <analysis_mode_fields>
 - `impact`: What an attacker could achieve if this vulnerability were exploited. Derive it from the finding's "Impact" and "Overview" fields. Write it as assessed, never as achieved.
 
-This run had no exploitation phase. Nothing was executed against the target, nothing was demonstrated, and no exploit evidence exists. Accordingly `auth_state`, `prerequisites`, `exploitation_steps`, `proof_of_impact` and `status` are **not** part of your tool schema — the deliverables contain no source for any of them. `confidence` is the deliverable's own rating and carries over verbatim; `severity` is yours to assess, since nothing measured it. Do not compensate for the missing fields by describing attack execution in `overview`, `impact` or `notes`. Report the weakness and how to fix it; that is the whole deliverable for this run.
+This run had no exploitation phase. Nothing was executed against the target, nothing was demonstrated, and no exploit evidence exists. Accordingly `auth_state`, `prerequisites`, `exploitation_steps` and `status` are **not** part of your tool schema — the deliverables contain no source for any of them. `confidence` is the deliverable's own rating and carries over verbatim; `severity` is yours to assess, since nothing measured it. Do not compensate for the missing fields by describing attack execution in `overview`, `impact` or `notes`. Report the weakness and how to fix it; that is the whole deliverable for this run.
 </analysis_mode_fields>
 
 **Optional fields:**
@@ -225,7 +226,7 @@ Before finalizing, verify:
 <exploit_mode_checks>
 - [ ] Does every finding have `auth_state` and `prerequisites`?
 - [ ] Does every finding have `exploitation_steps` with prose/code items?
-- [ ] Does every finding have `proof_of_impact`?
+- [ ] Did I leave HTTP evidence attachment to the host without authoring a separate evidence section?
 - [ ] Are severity ratings unchanged from the source deliverables?
 </exploit_mode_checks>
 <analysis_mode_checks>

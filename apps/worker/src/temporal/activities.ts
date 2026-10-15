@@ -44,6 +44,7 @@ import { RenumberError } from '../services/exact-output-commit.js';
 import { ExploitationCheckerService } from '../services/exploitation-checker.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
 import { executeGitCommandWithRetry } from '../services/git-manager.js';
+import { attachHttpEvidence, configuredCaptureRedactions, writeReproductionScript } from '../services/http-evidence.js';
 import { pdfProvenanceIsCurrent } from '../services/pdf-renderer.js';
 import { runPreflightChecks } from '../services/preflight.js';
 import { formatVulnClassScope } from '../services/prompt-manager.js';
@@ -630,7 +631,24 @@ async function runExploitAgentWithCollector(
   const queuePath = path.join(dir, `${vulnClass}_exploitation_queue.json`);
   const { validIds, idToType } = await readExploitQueue(queuePath);
 
-  const collector = createExploitCollector({ vulnClass, validIds });
+  const replayContainer = getOrCreateContainer(
+    input.workflowId,
+    buildSessionMetadata(input),
+    buildContainerConfig(input),
+  );
+  const replayConfig = await replayContainer.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
+  if (isErr(replayConfig)) throw deterministicActivityFailure(replayConfig.error, 'ConfigurationError');
+  const collector = createExploitCollector({
+    requireHttpEvidence: true,
+    sourceDir: input.repoPath,
+    vulnClass,
+    validIds,
+    deliverablesDir: dir,
+    targetUrl: input.webUrl,
+    secrets: configuredCaptureRedactions(replayConfig.value?.authentication?.credentials).map(
+      (redaction) => redaction.value,
+    ),
+  });
 
   const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
     const logger = createActivityLogger();
@@ -726,18 +744,33 @@ export async function runReportAgent(input: ActivityInput, exploit: boolean): Pr
   }
 
   const collector = createFindingCollector(exploit);
+  const evidenceContainer = getOrCreateContainer(
+    input.workflowId,
+    buildSessionMetadata(input),
+    buildContainerConfig(input),
+  );
+  const evidenceConfig = await evidenceContainer.configLoader.loadOptional(
+    input.configPath,
+    undefined,
+    input.configYAML,
+  );
+  if (isErr(evidenceConfig)) throw deterministicActivityFailure(evidenceConfig.error, 'ConfigurationError');
+  const captureRedactions = configuredCaptureRedactions(evidenceConfig.value?.authentication?.credentials);
 
   const writeDeliverable = async (deliverablesPath: string, execution: { readonly model?: string }): Promise<void> => {
     const logger = createActivityLogger();
     const { attachQueueCodeLocations } = await import('../services/code-location-join.js');
     const collected = collector.getAll();
     logger.info(`Collected ${collected.length} finding(s) from report agent`);
-    const findings = await attachQueueCodeLocations(
+    const findingsWithLocations = await attachQueueCodeLocations(
       collected,
       deliverablesPath,
       logger,
       durableState.participating_classes,
     );
+    const findings = exploit
+      ? await attachHttpEvidence(findingsWithLocations, deliverablesPath, captureRedactions)
+      : findingsWithLocations;
 
     // report_meta is written by the set-report-meta CLI while the agent runs; read it back so
     // the two halves of report.json end up in one document.
@@ -1350,6 +1383,18 @@ export async function surfaceReportOutputs(input: ActivityInput): Promise<Surfac
   const deliverablesPath = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   if (state.report?.stage !== 'finalized' || !(await finalProgressIsCoherent(deliverablesPath, state.report))) {
     throw runStateFailure(new RunStateError('CorruptedSessionError', 'report-surface-terminal-proof-invalid'));
+  }
+
+  if (state.exploit) {
+    const reportData = JSON.parse(
+      await fs.readFile(path.join(deliverablesPath, REPORT_JSON_FILENAME), 'utf8'),
+    ) as ReportData;
+    const scriptPath = await writeReproductionScript(
+      deliverablesPath,
+      input.webUrl,
+      new Set(reportData.findings.map((finding) => finding.finding_id)),
+    );
+    createActivityLogger().info(`Wrote ${path.basename(scriptPath)} from final report findings`);
   }
 
   // The manifest just proved coherent, so the canonical digest read cannot miss here.

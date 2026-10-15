@@ -7,13 +7,14 @@
 /** Best-effort, narrow customer output publication. */
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   ASSEMBLED_REPORT_FILENAME,
   ASSEMBLED_REPORT_PDF_FILENAME,
   FINAL_REPORT_MD_FILENAME,
   FINAL_REPORT_PDF_FILENAME,
+  REPRODUCTION_SCRIPT_FILENAME,
   SARIF_FILENAME,
 } from '../paths.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
@@ -147,8 +148,8 @@ async function surfaceProvenancedPdf(args: {
 }
 
 /**
- * Surface only Markdown, PDF, and optional SARIF. A copy failure never changes workflow status;
- * it produces a warning and leaves any previous destination atomically intact.
+ * Surface the final report, optional SARIF, and its replay script. A copy failure never changes
+ * workflow status; it produces a warning and leaves any previous destination atomically intact.
  */
 export async function surfaceReportOutputs(args: {
   readonly deliverablesDir: string;
@@ -178,6 +179,11 @@ export async function surfaceReportOutputs(args: {
     });
   }
   outputs.push({ source: SARIF_FILENAME, destination: SARIF_FILENAME, removeWhenSourceMissing: true });
+  outputs.push({
+    source: REPRODUCTION_SCRIPT_FILENAME,
+    destination: REPRODUCTION_SCRIPT_FILENAME,
+    removeWhenSourceMissing: true,
+  });
   const copyOutput = args.copyOutput ?? atomicCopy;
   const surfaced: string[] = [];
   const removedStale: string[] = [];
@@ -188,6 +194,7 @@ export async function surfaceReportOutputs(args: {
     const destinationPath = path.join(args.customerDir, output.destination);
     try {
       await copyOutput(sourcePath, destinationPath);
+      if (output.destination === REPRODUCTION_SCRIPT_FILENAME) await chmod(destinationPath, 0o700);
       surfaced.push(output.destination);
       args.logger.info(`Surfaced ${output.destination}`);
     } catch (error) {

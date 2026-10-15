@@ -18,6 +18,7 @@ import type { VulnClass } from '../types/config.js';
 import type { ReconciliationClass } from '../types/reconciliation.js';
 import { classDisplayName, type PartialReason, type PartialReasonCode } from '../types/run-state.js';
 import { compareCategories, orderFindings } from './finding-order.js';
+import { projectFindingEvidence } from './report-evidence.js';
 
 // ============================================================================
 // TYPES
@@ -130,7 +131,9 @@ function renderStepItem(item: StepItem): string {
     return item.text;
   }
   const lang = item.block.language || '';
-  return `\`\`\`${lang}\n${item.block.content}\n\`\`\``;
+  const longestRun = Math.max(0, ...(item.block.content.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return `${fence}${lang}\n${item.block.content}\n${fence}`;
 }
 
 function renderStepItems(items: readonly StepItem[]): string {
@@ -164,6 +167,7 @@ function titleCase(s: string): string {
 
 function renderFinding(finding: AddFindingInput, exploitEnabled: boolean): string {
   const lines: string[] = [];
+  const evidence = exploitEnabled ? projectFindingEvidence(finding) : undefined;
 
   // Heading
   lines.push(`### ${finding.finding_id}: ${finding.title}`);
@@ -209,10 +213,8 @@ function renderFinding(finding: AddFindingInput, exploitEnabled: boolean): strin
     }
   }
 
-  if (finding.proof_of_impact && finding.proof_of_impact.length > 0) {
-    lines.push('**Proof of Impact:**');
-    lines.push('');
-    lines.push(renderStepItems(finding.proof_of_impact));
+  if (evidence?.capturedHttpEvidence !== undefined) {
+    lines.push(renderAdditionalSection(evidence.capturedHttpEvidence));
     lines.push('');
   }
 
@@ -230,11 +232,9 @@ function renderFinding(finding: AddFindingInput, exploitEnabled: boolean): strin
   }
 
   // Additional sections
-  if (finding.additional_sections && finding.additional_sections.length > 0) {
-    for (const section of finding.additional_sections) {
-      lines.push(renderAdditionalSection(section));
-      lines.push('');
-    }
+  for (const section of evidence?.additionalSections ?? finding.additional_sections ?? []) {
+    lines.push(renderAdditionalSection(section));
+    lines.push('');
   }
 
   return lines.join('\n').trimEnd();

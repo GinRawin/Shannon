@@ -31,7 +31,7 @@ export interface MountPair {
 /**
  * Hidden subdirectory inside each run directory that holds all internals
  * (deliverables, logs, prompts, session state, browser artifacts). Keeps the
- * run folder's top level clean so only the final report is visible. Must match
+ * run folder's top level limited to final outputs. Must match
  * INTERNAL_DIR in the worker package.
  */
 export const INTERNAL_DIR = '.shannon';
