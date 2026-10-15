@@ -1,48 +1,45 @@
-# HTTP validation evidence
+# Evidence selection and manual reproduction
 
-New exploit runs collect the HTTP exchange from the validation invocation itself. This feature does not intercept every tool's network traffic. The agent chooses the validation request; the host executes it, records its trace, and verifies the attachment before publication.
+## Exploit agent decisions
 
-## Agent workflow
+Every newly confirmed finding must submit `verification_method` (`http`, `browser`, `mixed`, `other`), `http_evidence_display` (`include`, `omit`), and a meaningful `http_evidence_reason` to `add_exploit`. The exploit agent decides whether HTTP exchanges help demonstrate this finding. The report agent cannot override that decision.
 
-1. Call `capture_http_request` with a queue `vulnerability_id` and `curl_arguments` array. Use absolute paths for files, or paths relative to the assessed repository. The tool runs curl directly; `$TOKEN`, command substitution, pipes, and redirections are not expanded by a shell. Curl config files and custom trace settings are rejected. Curl's implicit configuration file is disabled so it cannot override capture settings.
-2. Inspect the returned stdout/stderr and actual on-disk evidence to assess the result. A successful tool invocation or `complete: true` means the request/response was captured, not that exploitation succeeded. Check `exit_code` and the actual response. Output to the model is bounded to 32 KiB per stream; the trace retains the full captured contents.
-3. Submit the relevant capture IDs in `add_exploit.http_evidence_ids`. `list_http_evidence` retrieves existing receipts without sending requests. IDs must come from this collector's real tool calls and belong to the submitted queue ID. A child can call the same evidence tools and return its IDs to the parent.
-4. For browser/DOM proof without an applicable complete HTTP exchange, submit `http_evidence_unavailable_reason` along with the original browser proof. The final report discloses this limitation. Never repeat a one-time or state-changing proof solely to obtain HTTP evidence.
+For `include`, select actual capture IDs in `http_evidence_ids`. Only those records appear in Markdown/PDF. For `omit`, leave that list empty and preserve actual browser/other observations in `proof_of_impact`; optionally supply existing workspace-relative screenshots/logs in `browser_evidence_files`. No HTTP capture or empty/missing-HTTP section is required for browser-only XSS. Do not put auxiliary HTTP transcripts into proof intended for browser-only presentation. The host validates referenced files, capture ownership, completeness and SHA-256, but does not claim to independently assess the vulnerability from transport success.
 
-Example tool arguments:
+The host projects original browser/other observations into a verification section, including fenced DOM/console results. Renumbering and compaction preserve evidence bytes and receipt identities. Existing entries without an explicit display decision are `unreviewed`: available directory files are never silently attached. Review and migrate them explicitly instead.
 
-```json
-{
-  "vulnerability_id": "AUTHZ-01",
-  "curl_arguments": ["-sS", "-H", "Cookie: session=actual-test-session", "https://target.example/api/private"],
-  "timeout_seconds": 120
-}
+## Capture and provenance
+
+Use either `shannon-curl --finding-id AUTHZ-01 -- <curl arguments>` or `capture_http_request` with `vulnerability_id` and `curl_arguments`. In an active worker both invoke the same live collector through its host capture service; CLI receipts are visible in `list_http_evidence` and accepted by `add_exploit`. CLI arguments undergo shell expansion in the caller; structured argv is literal. CLI tool output is bounded to the same 32 KiB per stream as structured tool output. Full HTTP bytes remain on disk. A failed host call never falls back to a second request.
+
+The validation and capture are a single invocation. Never repeat state-changing, one-time, or browser proofs merely to obtain a capture or script. `list_http_evidence` is read-only. Child agents inherit the same capture tools and CLI service. A standalone CLI outside an active worker can still capture privately, but its files are not automatically imported as host receipts.
+
+Private records live in `.shannon/deliverables/http-exchanges/<original-queue-id>/`. Version 3 records retain original curl argv, cwd, timeout, input snapshots, trace, exact decoded bytes, and export variable bindings. Receipts bind all of these bytes by SHA-256; the model cannot provide its own receipts. Configuration files, independent/parallel transfers and trace overrides are rejected. These are curl application-level exchanges, not TCP/TLS PCAP. Consistency with a host receipt is not a signed forensic archive.
+
+Supported file inputs include curl data/JSON, multipart, upload, cookie/header files and certificates. Regular inputs are snapshotted up to 16 MiB; credential-bearing files require a fresh operator-provided path in the exported script. Unfamiliar options, unrecorded stdin, complex multipart file lists, missing inputs and historical dependencies are explicitly manual-only. They are not silently omitted from an executable recipe.
+
+## reproduce.sh
+
+`reproduction_capture_ids` independently chooses actual recorded calls in execution order, including required setup and cleanup. By default it uses the displayed HTTP IDs; `[]` records manual/browser steps only. HTTP display can be omitted while explicitly retaining auxiliary calls for manual reproduction. All retained exploited findings appear in the script index.
+
+Script generation does not require `verify_http_replay` and sends no requests. Exploit-mode finalization generates the script from committed collectors and retained report IDs; report-only retries restore it. Publication copies it with mode 0700. Generation failure fails finalization; PDF rendering remains warning-only.
+
+```bash
+bash reproduce.sh                    # list findings; sends nothing
+bash reproduce.sh --show XSS-01      # show manual steps/commands and required variables
+bash reproduce.sh AUTHZ-01           # execute only this finding, or show browser/manual steps
+bash reproduce.sh --all             # explicitly execute all packaged calls
+bash reproduce.sh --verify AUTHZ-01  # explicitly run optional host-verified impact assertions
 ```
 
-The tool returns a `capture_id`, `file`, `sha256`, timestamp, curl exit code, completeness flag, and curl output. HTTP errors such as 401 are captured too; they are evidence of that response, not evidence of successful exploitation. Transport failures/timeouts retain incomplete evidence and cannot silently count as complete HTTP proof.
+Authentication stays in private evidence. The exported script requires environment variables for sensitive argument values or paths to credential-bearing input files. `--show` lists their exact names and meanings. Sensitive JSON/form bodies are supplied as entire argument values so quoting, JSON keys and payload bytes are not rewritten. Missing required values/dependencies are detected before sending any selected raw commands. Input snapshots are restored in a fresh results directory; output/cookie-jar/trace paths are redirected there. Each command saves stdout, stderr, a trace and a result. Command success is reported separately from impact assertion success; a browser-only operation is reported as manual verification, never as an HTTP reproduction pass.
 
-`verify_http_replay` is an optional separate facility for checking a structured, repeatable HTTP PoC with explicit impact assertions and cleanup. Its real exchanges also produce usable capture IDs. Do not invoke it merely to replace missing original evidence in a non-repeatable flow.
+Ordinary calls use the original URL, including its path and query. Optional `BASE_URL` must be an HTTP(S) origin and replaces only the origin. Structured verifier plans use the assessment origin by default as well. Authentication and request/response projections for the report retain the configured-login redaction behavior.
 
-## Storage and report assembly
+`verify_http_replay` remains an optional facility for repeatable plans with explicit impact assertions and cleanup. It sends real requests. Submit an identical successfully verified plan as `http_replay`; export never treats an unverified plan or old arbitrary Bash as host-verified. Literal authentication headers in plans are rejected; use operator/extracted variables. It is not a prerequisite for recording manual reproduction.
 
-Private records live at:
+## Historical repair and deployment
 
-```text
-.shannon/deliverables/http-exchanges/<original-queue-id>/exchange-<timestamp>-<capture-id>.json
-```
+`dist/scripts/repair-evidence-report.js --source <original-deliverables> --report <original-report.json> --output <new-directory> --decisions <reviewed-decisions.json>` creates a separate offline correction. It requires a reviewed decision for every retained finding, imports only selected historical captures with original-file hashes, preserves original observations and refuses to overwrite existing output. Recovered commands require original log references/checksums; missing original argv or input snapshots stays manual-only. The repair does not call curl, a browser or a scanner. `--no-pdf` permits local checks when Typst is unavailable.
 
-Each record includes the original curl trace and decoded request/response bytes as Base64. Text and binary bodies, authentication headers, cookies, redirects, and failed transfers remain in the private evidence. These are application-level curl traces, not PCAP or exact TCP/TLS frames.
-
-Host-only receipts are written into the structured exploit collector; the model cannot submit its own receipt. The host checks the stored bytes against the receipt at submission and report assembly. Finding renumbering preserves original queue IDs inside receipts. The report attaches only selected receipt-backed captures for new enforced entries, rather than every file in the directory. Changes to a selected file fail verification. This checks consistency with the host's recorded execution; it is not a signed, tamper-proof forensic archive.
-
-Report projections redact configured login credentials while leaving private evidence unchanged. A complete HTTP attachment does not automatically imply a host-verified impact assertion or inclusion in `reproduce.sh`.
-
-In Markdown and PDF, captured requests and responses appear once immediately after Exploitation Steps, under “捕获的 HTTP 请求与响应”. The report writer does not collect a separate model-authored evidence field. Legacy narrative evidence is ignored by the final renderers, and findings without HTTP captures explicitly state that no associated HTTP capture is available. No substitute evidence is generated.
-
-The `shannon-curl` CLI uses the same capture implementation and remains useful for manual operation. For new exploit submissions use the structured tools, which additionally register host receipts. Legacy runs without receipt fields retain their existing report-loading behavior.
-
-## Deployment and verification
-
-Rebuild the worker image before the next assessment (`./shannon build` for local development). Source changes alone do not update an existing worker image. There are no new proxy services, network permissions, or changes to an already running assessment. The extra instructions are injected by the new executor; live-mounted prompt files need not be changed.
-
-Run `node scripts/verify-http-evidence.mjs` for loopback-only integration checks, including single-send validation, provenance and checksum enforcement, failure handling, renumbering, and report attachment. The test builds into a temporary directory and does not contact assessment targets.
+Rebuild the worker image (`./shannon build`) before a new assessment. Existing containers continue using their installed code. Run `node scripts/verify-http-evidence.mjs` for loopback-only integration checks covering capture, provenance, evidence choice, browser rendering, manual reproduction, authentication, dependencies, CLI registration and report recovery.

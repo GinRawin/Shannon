@@ -217,6 +217,10 @@ function renderFinding(finding: AddFindingInput, exploitEnabled: boolean): strin
     lines.push(renderAdditionalSection(evidence.capturedHttpEvidence));
     lines.push('');
   }
+  if (evidence?.verificationEvidence !== undefined) {
+    lines.push(renderAdditionalSection(evidence.verificationEvidence));
+    lines.push('');
+  }
 
   // Remediation
   lines.push('**Remediation:**');

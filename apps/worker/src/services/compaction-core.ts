@@ -153,10 +153,22 @@ export function deepRemapStrings(value: unknown, gapMap: ReadonlyMap<string, str
   if (typeof value === 'string') return remapTaskReferences(value, gapMap);
   if (Array.isArray(value)) return value.map((entry) => deepRemapStrings(entry, gapMap));
   if (value !== null && typeof value === 'object') {
-    if ((value as { heading?: unknown }).heading === '捕获的 HTTP 请求与响应') return value;
+    if (
+      ['捕获的 HTTP 请求与响应', '浏览器验证证据', '验证证据'].includes((value as { heading?: string }).heading ?? '')
+    )
+      return value;
     const remapped: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      remapped[key] = ['reproduction_script', 'http_replay', 'http_replay_verification'].includes(key)
+      remapped[key] = [
+        'reproduction_script',
+        'http_replay',
+        'http_replay_verification',
+        'http_evidence_receipts',
+        'http_evidence_ids',
+        'reproduction_capture_ids',
+        'proof_of_impact',
+        'browser_evidence_files',
+      ].includes(key)
         ? entry
         : deepRemapStrings(entry, gapMap);
     }

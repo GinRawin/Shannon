@@ -6,6 +6,18 @@ Shannon as a whole is distributed under the GNU Affero General Public License,
 version 3.0 (see LICENSE). Third-party material incorporated into Shannon
 remains subject to the attribution and notice requirements of its own license.
 
+## Noto CJK fonts
+
+The report template bundles the unmodified Noto Sans CJK Regular and Bold font
+collections (Sans version 2.004), including their Chinese monospace faces.
+
+Project: https://github.com/notofonts/noto-cjk
+Copyright: 2010-2012 Google Corporation
+License: SIL Open Font License, Version 1.1
+
+The applicable license is reproduced at `LICENSES/OFL-Noto-CJK.txt` and beside
+the bundled font files in `apps/worker/templates/typst/assets/fonts/OFL.txt`.
+
 ## Pi
 
 Shannon uses Pi as part of its agent framework.

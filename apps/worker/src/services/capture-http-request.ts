@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { type CurlInvocation, snapshotCurlInvocation } from './curl-invocation.js';
 import { type ParsedHttpTrace, parseCurlTrace } from './http-capture.js';
 
 export interface HttpEvidenceReceipt {
@@ -16,12 +17,14 @@ export interface HttpEvidenceReceipt {
 }
 
 export interface CapturedHttpRecord extends ParsedHttpTrace {
-  schema_version: 2;
+  schema_version: 2 | 3;
   capture_id: string;
   finding_id: string;
   captured_at: string;
   exit_code: number;
   trace: string;
+  invocation?: CurlInvocation;
+  provenance?: { kind: 'historical_import'; original_file: string; sha256: string; command_log?: string };
 }
 
 export function validateCurlCaptureArguments(args: readonly string[]): void {
@@ -98,6 +101,8 @@ export async function persistCapturedTrace(args: {
   trace: string;
   exitCode: number;
   capturedAt?: string;
+  invocation?: CurlInvocation;
+  provenance?: CapturedHttpRecord['provenance'];
 }): Promise<HttpEvidenceReceipt> {
   if (!/^(INJ|XSS|AUTH|AUTHZ|SSRF|MISC)-\d{2,}$/.test(args.findingId))
     throw new Error('Invalid HTTP evidence finding ID');
@@ -106,13 +111,15 @@ export async function persistCapturedTrace(args: {
   const target = path.join(args.deliverablesDir, relative);
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   const record: CapturedHttpRecord = {
-    schema_version: 2,
+    schema_version: args.invocation ? 3 : 2,
     capture_id: captureId,
     finding_id: args.findingId,
     captured_at: args.capturedAt ?? new Date().toISOString(),
     exit_code: args.exitCode,
     ...parseCurlTrace(args.trace),
     trace: args.trace,
+    ...(args.invocation ? { invocation: args.invocation } : {}),
+    ...(args.provenance ? { provenance: args.provenance } : {}),
   };
   const contents = `${JSON.stringify(record, null, 2)}\n`;
   await writeFile(target, contents, { mode: 0o600, flag: 'wx', flush: true });
@@ -158,6 +165,7 @@ export async function captureHttpRequest(args: {
   timeoutSeconds?: number;
   signal?: AbortSignal | undefined;
   cwd?: string | undefined;
+  secrets?: readonly string[] | undefined;
   onStdout?: (data: Buffer) => void;
   onStderr?: (data: Buffer) => void;
 }): Promise<{ receipt: HttpEvidenceReceipt; stdout: string; stderr: string }> {
@@ -172,6 +180,7 @@ export async function captureHttpRequest(args: {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const temporary = await mkdtemp(path.join(directory, '.capture-'));
   const tracePath = path.join(temporary, 'curl.trace');
+  const invocation = await snapshotCurlInvocation(args.curlArguments, args.cwd ?? process.cwd(), timeout, args.secrets);
   const stdout: Buffer[] = [],
     stderr: Buffer[] = [];
   let stdoutLength = 0,
@@ -222,11 +231,21 @@ export async function captureHttpRequest(args: {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+    for (const input of invocation.inputs) {
+      if (input.base64 === undefined) continue;
+      try {
+        if (!(await readFile(input.path)).equals(Buffer.from(input.base64, 'base64')))
+          invocation.manual_reasons.push(`Input changed during capture: ${input.path}`);
+      } catch {
+        invocation.manual_reasons.push(`Input became unreadable during capture: ${input.path}`);
+      }
+    }
     const receipt = await persistCapturedTrace({
       deliverablesDir: args.deliverablesDir,
       findingId: args.findingId,
       trace,
       exitCode,
+      invocation,
     });
     const output = (buffers: Buffer[], length: number) =>
       Buffer.concat(buffers).toString('utf8') +

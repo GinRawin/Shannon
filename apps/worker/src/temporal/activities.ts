@@ -675,7 +675,20 @@ async function runExploitAgentWithCollector(
     logger.info(`Wrote ${vulnClass}_exploitation_evidence.md from structured data (${markdown.length} bytes)`);
   };
 
-  return runAgentActivity(agentName, input, collector.tools, writeDeliverable);
+  const { registerCaptureBridge } = await import('../services/http-capture-bridge.js');
+  const captureTool = collector.tools.find((tool) => tool.name === 'capture_http_request');
+  if (!captureTool) throw new Error('Exploit HTTP capture tool is unavailable');
+  const unregister = await registerCaptureBridge({
+    directory: dir,
+    findingIds: validIds,
+    cwd: input.repoPath,
+    tool: captureTool,
+  });
+  try {
+    return await runAgentActivity(agentName, input, collector.tools, writeDeliverable);
+  } finally {
+    unregister();
+  }
 }
 
 export async function runInjectionExploitAgent(input: ActivityInput): Promise<AgentMetrics> {
@@ -1386,6 +1399,8 @@ export async function surfaceReportOutputs(input: ActivityInput): Promise<Surfac
   }
 
   if (state.exploit) {
+    // Also repair scripts for older, already-finalized runs that resume directly at publication.
+    // New finalizations generate the script in finalizeReport, including report-only recovery.
     const reportData = JSON.parse(
       await fs.readFile(path.join(deliverablesPath, REPORT_JSON_FILENAME), 'utf8'),
     ) as ReportData;

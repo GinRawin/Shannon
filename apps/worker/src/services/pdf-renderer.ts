@@ -36,7 +36,22 @@ const DATA_FILENAME = 'data.json';
 const TEMPLATE_FILENAME = 'report.typ';
 const OUTPUT_FILENAME = 'report.pdf';
 
-export const PDF_RENDERER_VERSION = '3';
+export const PDF_RENDERER_VERSION = '5';
+
+const REQUIRED_FONTS = ['NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc'] as const;
+
+function fontDirectory(templatePath: string): string {
+  return path.join(path.dirname(templatePath), 'assets', 'fonts');
+}
+
+/** Font bytes affect the PDF just as template bytes do. */
+async function templateVersion(templatePath: string): Promise<string> {
+  const digest = createHash('sha256').update(await readFile(templatePath));
+  for (const filename of REQUIRED_FONTS) {
+    digest.update(filename).update(await readFile(path.join(fontDirectory(templatePath), filename)));
+  }
+  return digest.digest('hex');
+}
 
 export interface PdfProvenance {
   readonly pdf_sha256: string;
@@ -87,12 +102,12 @@ export async function readPdfProvenance(args: {
   readonly canonicalReportSha256: string;
   readonly templatePath: string;
 }): Promise<PdfProvenance> {
-  const [pdfBytes, templateBytes] = await Promise.all([readFile(args.pdfPath), readFile(args.templatePath)]);
+  const [pdfBytes, version] = await Promise.all([readFile(args.pdfPath), templateVersion(args.templatePath)]);
   return {
     pdf_sha256: sha256(pdfBytes),
     canonical_report_sha256: args.canonicalReportSha256,
     renderer_version: PDF_RENDERER_VERSION,
-    template_version: sha256(templateBytes),
+    template_version: version,
   };
 }
 
@@ -126,7 +141,7 @@ export async function pdfProvenanceIsCurrent(args: {
   if (args.provenance.renderer_version !== PDF_RENDERER_VERSION) return false;
   let templateSha256: string;
   try {
-    templateSha256 = sha256(await readFile(args.templatePath));
+    templateSha256 = await templateVersion(args.templatePath);
   } catch {
     return false;
   }
@@ -149,6 +164,13 @@ export async function renderReportPdf(options: RenderReportPdfOptions): Promise<
   const tester = options.tester ?? DEFAULT_TESTER;
   const brand = options.brand ?? DEFAULT_BRAND;
 
+  // Typst can succeed with Chinese rendered as boxes. Require the bundled fonts
+  // even on hosts whose system fonts would otherwise hide a broken image/package.
+  for (const filename of REQUIRED_FONTS) {
+    const fontPath = path.join(fontDirectory(templatePath), filename);
+    if (!existsSync(fontPath)) throw new Error(`Required PDF font is missing: ${fontPath}`);
+  }
+
   const typstData = adaptReportToTypst(reportData);
 
   const workDir = await mkdtemp(path.join(tmpdir(), 'shannon-typst-'));
@@ -167,8 +189,11 @@ export async function renderReportPdf(options: RenderReportPdfOptions): Promise<
 
     await writeFile(dataInWorkDir, JSON.stringify(typstData), 'utf-8');
 
-    await execFileAsync('typst', [
+    const { stderr } = await execFileAsync('typst', [
       'compile',
+      '--ignore-system-fonts',
+      '--font-path',
+      path.join(workDir, 'assets', 'fonts'),
       '--root',
       workDir,
       '--input',
@@ -180,6 +205,10 @@ export async function renderReportPdf(options: RenderReportPdfOptions): Promise<
       templateInWorkDir,
       pdfInWorkDir,
     ]);
+
+    if (/warning: unknown font family:/i.test(stderr)) {
+      throw new Error(`PDF font configuration is invalid: ${stderr.trim()}`);
+    }
 
     await mkdir(path.dirname(outputPath), { recursive: true });
     // Publish the compiled PDF by atomic rename, so a reader never observes a half-written file

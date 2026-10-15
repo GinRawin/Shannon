@@ -76,7 +76,8 @@
   },
 )
 
-#set text(size: 10.5pt, fill: ink)
+// Keep the Latin typeface and explicitly supply Chinese glyphs in every context.
+#set text(font: ("Libertinus Serif", "Noto Sans CJK SC"), size: 10.5pt, fill: ink)
 #set par(leading: 0.7em, justify: false)
 
 #show heading.where(level: 1): it => block(sticky: true)[
@@ -100,7 +101,7 @@
   #v(-2pt)
 ]
 
-#show raw: set text(size: 8.5pt)
+#show raw: set text(font: ("DejaVu Sans Mono", "Noto Sans Mono CJK SC"), size: 8.5pt)
 #show raw.where(block: false): it => box(
   fill: code-bg,
   inset: (x: 3pt, y: 0pt),
@@ -544,8 +545,14 @@
     render-items(step.items)
   }
 
-  heading(level: 3, outlined: false)[#inline-code(f.capturedHttpEvidence.heading)]
-  render-items(f.capturedHttpEvidence.items)
+  if "capturedHttpEvidence" in f {
+    heading(level: 3, outlined: false)[#inline-code(f.capturedHttpEvidence.heading)]
+    render-items(f.capturedHttpEvidence.items)
+  }
+  if "verificationEvidence" in f {
+    heading(level: 3, outlined: false)[#inline-code(f.verificationEvidence.heading)]
+    render-items(f.verificationEvidence.items)
+  }
   render-remediation(f)
   render-finding-extras(f)
   v(16pt)

@@ -131,6 +131,12 @@ COPY --from=builder /app/apps/cli/package.json /app/apps/cli/package.json
 COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/shannon/
 COPY LICENSES/ /usr/share/licenses/shannon/LICENSES/
 
+# PDF fonts travel with the template; fail the build if its Chinese fallback is absent.
+RUN test -s /app/apps/worker/templates/typst/assets/fonts/NotoSansCJK-Regular.ttc && \
+    test -s /app/apps/worker/templates/typst/assets/fonts/NotoSansCJK-Bold.ttc && \
+    typst fonts --ignore-system-fonts --font-path /app/apps/worker/templates/typst/assets/fonts | \
+      rg -q 'Noto Sans CJK SC'
+
 RUN npm install -g --ignore-scripts @playwright/cli@0.1.1
 RUN mkdir -p /tmp/.claude/skills && \
     playwright-cli install --skills && \

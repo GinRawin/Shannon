@@ -8,6 +8,7 @@ import path from 'node:path';
 import { Type } from 'typebox';
 import { Value } from 'typebox/value';
 import { type HttpEvidenceReceipt, persistCapturedTrace } from './capture-http-request.js';
+import { snapshotCurlInvocation } from './curl-invocation.js';
 
 const StepSchema = Type.Object({
   method: Type.Union(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].map((value) => Type.Literal(value))),
@@ -72,6 +73,16 @@ export function replayPlanDigest(plan: HttpReplayPlan): string {
   return createHash('sha256').update(JSON.stringify(plan)).digest('hex');
 }
 
+/** Exported plans must not carry literal operator authentication from a test session. */
+export function hasLiteralReplayAuthentication(plan: HttpReplayPlan): boolean {
+  return [...plan.steps, ...(plan.cleanup ?? [])].some((step) =>
+    Object.entries(step.headers ?? {}).some(
+      ([name, value]) =>
+        /authorization|cookie|token|session|secret|api.?key/i.test(name) && !/\$\{[A-Z][A-Z0-9_]*\}/.test(value),
+    ),
+  );
+}
+
 /** Inspect literal values, not JSON field names or endpoint path segments. */
 export function containsReplaySecret(plan: HttpReplayPlan, secrets: readonly string[]): boolean {
   const values: string[] = [];
@@ -125,7 +136,7 @@ export function hasVerifiedReplay(entry: {
 
 // No shell evaluation, user scripts, local file uploads, or arbitrary curl options are accepted.
 export const HTTP_REPLAY_PYTHON = String.raw`
-import json, os, pathlib, re, subprocess, sys
+import json, os, pathlib, re, subprocess, sys, base64
 from datetime import datetime, timezone
 
 VARIABLES = ("BASE_URL", "BEARER_TOKEN", "COOKIE", "USERNAME", "PASSWORD", "OTP")
@@ -143,7 +154,7 @@ def execute_step(step, variables, directory, index):
     url = interpolate(step["url"], variables)
     if not re.match(r"^\u0024\{BASE_URL\}(?:[/?#]|$)", step["url"]) or not re.match(r"^https?://", url):
         raise ValueError("Request URLs must start with \u0024{BASE_URL} and resolve to HTTP(S)")
-    args = ["curl", "--silent", "--show-error", "--globoff", "--connect-timeout", "15", "--max-time", "60",
+    args = ["curl", "--disable", "--silent", "--show-error", "--globoff", "--connect-timeout", "15", "--max-time", "60",
             "--request", step["method"], "--url", url, "--trace", str(prefix) + ".trace",
             "--dump-header", str(prefix) + ".headers", "--output", str(prefix) + ".body", "--write-out", "%{http_code}"]
     headers = dict(step.get("headers", {}))
@@ -170,7 +181,7 @@ def execute_step(step, variables, directory, index):
     if step.get("follow_redirects"): args += ["--location", "--max-redirs", "10"]
     if step.get("insecure"): args += ["--insecure"]
     result = subprocess.run(args, input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=70)
-    pathlib.Path(str(prefix) + ".meta.json").write_text(json.dumps({"exit_code": result.returncode, "captured_at": datetime.now(timezone.utc).isoformat()}))
+    pathlib.Path(str(prefix) + ".meta.json").write_text(json.dumps({"exit_code": result.returncode, "captured_at": datetime.now(timezone.utc).isoformat(), "curl_arguments": args[1:], "cwd": os.getcwd(), "stdin_base64": base64.b64encode(payload).decode()}))
     if result.returncode:
         raise ValueError("curl failed (exit %d)" % result.returncode)
     status = int(result.stdout.decode())
@@ -244,6 +255,7 @@ export async function verifyHttpReplay(args: {
   variables: Record<string, string>;
   deliverablesDir: string;
   targetUrl: string;
+  secrets?: readonly string[];
 }): Promise<{ verification?: HttpReplayVerification; error?: string; evidence?: HttpEvidenceReceipt[] }> {
   if (
     !Value.Check(HttpReplaySchema, args.plan) ||
@@ -254,11 +266,11 @@ export async function verifyHttpReplay(args: {
   }
   const runDir = path.join(args.deliverablesDir, 'http-replay-verifications', `${Date.now()}-${randomUUID()}`);
   await mkdir(runDir, { recursive: true, mode: 0o700 });
-  const entries = [{ finding_id: args.findingId, base_url: args.targetUrl, plan: args.plan }];
-  const source = `${HTTP_REPLAY_PYTHON}\nsys.exit(run(json.loads(${JSON.stringify(JSON.stringify(entries))})))\n`;
+  const baseUrl = new URL(args.targetUrl).origin;
+  const entries = [{ finding_id: args.findingId, base_url: baseUrl, plan: args.plan }];
+  const source = `${HTTP_REPLAY_PYTHON}\nsys.exit(run(json.loads(base64.b64decode('${Buffer.from(JSON.stringify(entries)).toString('base64')}'))))\n`;
   const environment: NodeJS.ProcessEnv = { ...process.env, OUTPUT_DIR: runDir };
-  for (const name of REPLAY_VARIABLES)
-    environment[name] = args.variables[name] ?? (name === 'BASE_URL' ? args.targetUrl : '');
+  for (const name of REPLAY_VARIABLES) environment[name] = args.variables[name] ?? (name === 'BASE_URL' ? baseUrl : '');
   let code: number;
   try {
     code = await new Promise<number>((resolve, reject) => {
@@ -290,7 +302,13 @@ export async function verifyHttpReplay(args: {
   let completeTraces = 0;
   for (const file of traceFiles) {
     const trace = await readFile(path.join(resultsDir, file), 'utf8');
-    let metadata = { exit_code: -1, captured_at: new Date().toISOString() };
+    let metadata: {
+      exit_code: number;
+      captured_at: string;
+      curl_arguments?: string[];
+      cwd?: string;
+      stdin_base64?: string;
+    } = { exit_code: -1, captured_at: new Date().toISOString() };
     try {
       metadata = JSON.parse(
         await readFile(path.join(resultsDir, file.replace(/\.trace$/, '.meta.json')), 'utf8'),
@@ -304,6 +322,17 @@ export async function verifyHttpReplay(args: {
       trace,
       exitCode: metadata.exit_code,
       capturedAt: metadata.captured_at,
+      ...(metadata.curl_arguments
+        ? {
+            invocation: await snapshotCurlInvocation(
+              metadata.curl_arguments,
+              metadata.cwd ?? process.cwd(),
+              70,
+              args.secrets,
+              Buffer.from(metadata.stdin_base64 ?? '', 'base64'),
+            ),
+          }
+        : {}),
     });
     evidence.push(captured);
     if (captured.complete) completeTraces++;

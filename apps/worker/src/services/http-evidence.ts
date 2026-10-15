@@ -1,8 +1,6 @@
 // Copyright (C) 2026 Keygraph, Inc.
 // Join actual curl traces and host-verified HTTP replay plans into report outputs.
 
-import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import type { AddFindingInput, AdditionalSection, StepItem } from '../collectors/finding-collector.js';
 import { REPRODUCTION_SCRIPT_FILENAME } from '../paths.js';
 import type { Credentials } from '../types/config.js';
@@ -11,9 +9,9 @@ import { ALL_RECONCILIATION_CLASSES } from '../types/reconciliation.js';
 import { type HttpEvidenceReceipt, readVerifiedHttpEvidence } from './capture-http-request.js';
 import { readCommittedFile } from './git-manager.js';
 import type { ParsedHttpTrace } from './http-capture.js';
-import { parseCurlTrace } from './http-capture.js';
 import type { HttpReplayPlan, HttpReplayVerification } from './http-replay.js';
-import { HTTP_REPLAY_PYTHON, hasVerifiedReplay } from './http-replay.js';
+import { hasVerifiedReplay } from './http-replay.js';
+import { writeManualReproductionScript } from './reproduction-script.js';
 
 interface CapturedExchange extends ParsedHttpTrace {
   captured_at: string;
@@ -21,6 +19,7 @@ interface CapturedExchange extends ParsedHttpTrace {
   file: string;
   trace: string;
   capture_id?: string;
+  provenance?: { kind: 'historical_import'; original_file: string; sha256: string; command_log?: string };
 }
 interface ReplayEntry {
   status?: string;
@@ -29,6 +28,16 @@ interface ReplayEntry {
   http_replay?: HttpReplayPlan | null;
   http_replay_verification?: HttpReplayVerification;
   http_evidence_unavailable_reason?: string;
+  verification_method?: string;
+  http_evidence_display?: 'include' | 'omit';
+  http_evidence_reason?: string;
+  http_evidence_ids?: string[];
+  http_evidence_receipts?: HttpEvidenceReceipt[];
+  reproduction_capture_ids?: string[];
+  proof_of_impact?: string;
+  evidence_of_vulnerability?: string;
+  exploitation_steps?: string[];
+  browser_evidence_files?: string[];
 }
 export interface CaptureRedaction {
   value: string;
@@ -78,53 +87,28 @@ async function loadTaskToFindingIds(dir: string): Promise<Map<string, string>> {
 }
 
 async function loadExchanges(dir: string): Promise<Map<string, CapturedExchange[]>> {
-  const root = path.join(dir, 'http-exchanges');
   const result = new Map<string, CapturedExchange[]>();
   const receiptsByTask = new Map<string, HttpEvidenceReceipt[]>();
   for (const vulnClass of ALL_RECONCILIATION_CLASSES) {
     const entries = await committedJson<
-      Array<{ vulnerability_id: string; http_evidence_receipts?: HttpEvidenceReceipt[] }>
+      Array<{
+        vulnerability_id: string;
+        http_evidence_receipts?: HttpEvidenceReceipt[];
+        http_evidence_ids?: string[];
+        http_evidence_display?: string;
+      }>
     >(dir, `${vulnClass}_exploit_collector.json`);
     for (const entry of entries ?? []) {
-      // Presence (including []) marks the new enforced path. Legacy runs remain readable.
-      if (entry.http_evidence_receipts !== undefined)
-        receiptsByTask.set(entry.vulnerability_id, entry.http_evidence_receipts);
+      // No filesystem inference, including for legacy runs. Display is an explicit agent choice.
+      receiptsByTask.set(
+        entry.vulnerability_id,
+        entry.http_evidence_display === 'include'
+          ? (entry.http_evidence_receipts ?? []).filter((receipt) =>
+              entry.http_evidence_ids?.includes(receipt.capture_id),
+            )
+          : [],
+      );
     }
-  }
-  let taskDirs: string[];
-  try {
-    taskDirs = await readdir(root);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') taskDirs = [];
-    else throw error;
-  }
-  for (const taskId of taskDirs.filter((id) => /^(INJ|XSS|AUTH|AUTHZ|SSRF|MISC)-\d{2,}$/.test(id)).sort()) {
-    if (receiptsByTask.has(taskId)) continue;
-    const taskDir = path.join(root, taskId);
-    for (const file of (await readdir(taskDir)).filter((name) => name.endsWith('.json')).sort()) {
-      const stored = JSON.parse(await readFile(path.join(taskDir, file), 'utf8')) as {
-        finding_id?: string;
-        captured_at?: string;
-        exit_code?: number;
-        trace?: string;
-      };
-      if (stored.finding_id !== taskId || typeof stored.trace !== 'string' || typeof stored.captured_at !== 'string') {
-        throw new Error(`Invalid HTTP capture: ${taskId}/${file}`);
-      }
-      // Decode the trace again, including legacy captures whose stored parsed strings were wrong.
-      const list = result.get(taskId) ?? [];
-      list.push({
-        ...parseCurlTrace(stored.trace),
-        trace: stored.trace,
-        captured_at: stored.captured_at,
-        exit_code: stored.exit_code ?? -1,
-        file: `http-exchanges/${taskId}/${file}`,
-      });
-      result.set(taskId, list);
-    }
-    result
-      .get(taskId)
-      ?.sort((a, b) => Date.parse(a.captured_at) - Date.parse(b.captured_at) || a.file.localeCompare(b.file));
   }
   for (const [taskId, receipts] of receiptsByTask) {
     const captures: CapturedExchange[] = [];
@@ -140,6 +124,25 @@ async function loadExchanges(dir: string): Promise<Map<string, CapturedExchange[
     result.set(taskId, captures);
   }
   return result;
+}
+
+/** Preserve the original observations while converting fenced blocks for both report renderers. */
+export function evidenceMarkdownItems(markdown: string): StepItem[] {
+  const items: StepItem[] = [];
+  const fence = /^(`{3,}|~{3,})([^\n]*)\n([\s\S]*?)^\1[ \t]*$/gm;
+  let cursor = 0;
+  for (const match of markdown.matchAll(fence)) {
+    const prose = markdown.slice(cursor, match.index).trim();
+    if (prose) items.push({ kind: 'prose', text: prose });
+    items.push({
+      kind: 'code',
+      block: { language: match[2]?.trim() || 'text', content: (match[3] ?? '').replace(/\n$/, '') },
+    });
+    cursor = (match.index ?? 0) + match[0].length;
+  }
+  const prose = markdown.slice(cursor).trim();
+  if (prose) items.push({ kind: 'prose', text: prose });
+  return items;
 }
 
 /** The model sees counts and file references; exact HTTP evidence is joined by the host later. */
@@ -291,6 +294,11 @@ function httpSection(
       kind: 'prose',
       text: `调用 ${index + 1}，捕获于 ${capture.captured_at}，curl 退出码 ${capture.exit_code}，${capture.capture_id ? `采集 ID：${capture.capture_id}，` : ''}证据文件：${capture.file}。`,
     });
+    if (capture.provenance)
+      items.push({
+        kind: 'prose',
+        text: `历史证据离线导入，未重新发送请求。原文件：${capture.provenance.original_file}；SHA-256：${capture.provenance.sha256}。`,
+      });
     if (capture.errors.length) {
       items.push({
         kind: 'prose',
@@ -343,6 +351,13 @@ export async function attachHttpEvidence(
   return findings.map((finding) => {
     const task = taskByFinding.get(finding.finding_id);
     const captures = task ? (capturesByTask.get(task) ?? []) : [];
+    const entry = entriesByFinding.get(finding.finding_id);
+    const display = entry?.http_evidence_display ?? 'unreviewed';
+    if (
+      display === 'include' &&
+      (!entry?.http_evidence_ids?.length || captures.length !== entry.http_evidence_ids.length)
+    )
+      throw new Error(`Selected HTTP evidence is unavailable for ${finding.finding_id}`);
     const complete = captures.some(
       (capture) =>
         !capture.errors.length &&
@@ -354,24 +369,58 @@ export async function attachHttpEvidence(
         {
           kind: 'prose',
           text: verifiedIds.has(finding.finding_id)
-            ? `此漏洞已通过宿主执行的 HTTP 影响断言和清理检查，包含在 ${REPRODUCTION_SCRIPT_FILENAME} 中。执行时会重新检查相同断言，失败时返回非零退出码。`
-            : `此漏洞未提供通过宿主验证的 HTTP 重放方案，不包含在 ${REPRODUCTION_SCRIPT_FILENAME} 中。未验证的旧版 Bash 脚本也不会执行。`,
+            ? `此漏洞有通过宿主验证的 HTTP 影响断言，可使用 ${REPRODUCTION_SCRIPT_FILENAME} --verify ${finding.finding_id} 显式执行。普通命令复验与影响断言分别记录。`
+            : `此漏洞没有自动化影响断言。使用 ${REPRODUCTION_SCRIPT_FILENAME} --show ${finding.finding_id} 查看实际采集调用或人工复验步骤；命令执行完成不代表漏洞影响已自动验证。`,
         },
         {
           kind: 'prose',
-          text: complete
-            ? '已附上通过 HTTP 捕获工具记录的请求与响应。'
-            : `缺少已关联的完整 HTTP 往返证据。${entriesByFinding.get(finding.finding_id)?.http_evidence_unavailable_reason ?? '请查看内部采集文件和其他利用证据。'}`,
+          text:
+            display === 'omit'
+              ? `根据利用验证方式，本报告不展示 HTTP 数据包。${entry?.http_evidence_reason ?? entry?.http_evidence_unavailable_reason ?? ''}`
+              : display === 'unreviewed'
+                ? '此旧记录尚未明确选择 HTTP 展示证据；未自动附加目录中的采集文件。'
+                : complete
+                  ? '已附上通过 HTTP 捕获工具记录的请求与响应。'
+                  : `缺少已关联的完整 HTTP 往返证据。${entriesByFinding.get(finding.finding_id)?.http_evidence_unavailable_reason ?? '请查看内部采集文件和其他利用证据。'}`,
         },
       ],
     };
     return {
       ...finding,
+      http_evidence_display: display,
+      ...(entry?.verification_method ? { verification_method: entry.verification_method } : {}),
       additional_sections: [
         ...(finding.additional_sections ?? []).filter(
-          (section) => !['捕获的 HTTP 请求与响应', '自动化重放覆盖'].includes(section.heading),
+          (section) =>
+            !['捕获的 HTTP 请求与响应', '自动化重放覆盖', '浏览器验证证据', '验证证据', '证据选择'].includes(
+              section.heading,
+            ),
         ),
-        ...(captures.length ? [httpSection(captures, redactions)] : []),
+        ...(display === 'include' && captures.length ? [httpSection(captures, redactions)] : []),
+        ...(entry &&
+        (display !== 'include' || entry.verification_method !== 'http') &&
+        (entry.proof_of_impact || entry.evidence_of_vulnerability)
+          ? [
+              {
+                heading: ['browser', 'mixed'].includes(entry.verification_method ?? '') ? '浏览器验证证据' : '验证证据',
+                items: evidenceMarkdownItems(
+                  [
+                    entry.proof_of_impact ?? entry.evidence_of_vulnerability ?? '',
+                    ...(entry.browser_evidence_files ?? []).map((file) => `浏览器证据文件：${file}`),
+                  ].join('\n\n'),
+                ).map((item) => {
+                  const mask = (value: string) =>
+                    redactions.reduce(
+                      (text, redaction) => text.split(redaction.value).join(redaction.placeholder),
+                      value,
+                    );
+                  return item.kind === 'prose'
+                    ? { ...item, text: mask(item.text) }
+                    : { ...item, block: { ...item.block, content: mask(item.block.content) } };
+                }),
+              },
+            ]
+          : []),
         coverage,
       ],
     };
@@ -383,45 +432,5 @@ export async function writeReproductionScript(
   targetUrl: string,
   includedFindingIds: ReadonlySet<string>,
 ): Promise<string> {
-  const entries = (await loadReplayEntries(dir)).filter(
-    (entry) =>
-      entry.status === 'exploited' &&
-      typeof entry.vulnerability_id === 'string' &&
-      includedFindingIds.has(entry.vulnerability_id) &&
-      hasVerifiedReplay(entry),
-  );
-  entries.sort((a, b) => (a.vulnerability_id as string).localeCompare(b.vulnerability_id as string));
-  const recipes = entries.map((entry) => ({
-    finding_id: entry.vulnerability_id,
-    base_url: targetUrl,
-    plan: entry.http_replay,
-  }));
-  const lines = [
-    '#!/usr/bin/env bash',
-    'set -euo pipefail',
-    'umask 077',
-    '# Requires Bash, Python 3 and curl. Export authentication values before running.',
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: These variables are expanded by the generated Bash script.
-    'export BASE_URL="${BASE_URL:-}" BEARER_TOKEN="${BEARER_TOKEN:-}" COOKIE="${COOKIE:-}"',
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: These variables are expanded by the generated Bash script.
-    'export USERNAME="${USERNAME:-}" PASSWORD="${PASSWORD:-}" OTP="${OTP:-}"',
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: These variables are expanded by the generated Bash script.
-    'mkdir -p "${OUTPUT_DIR:-./shannon-replay-results}"',
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: These variables are expanded by the generated Bash script.
-    'export OUTPUT_DIR="$(mktemp -d "${OUTPUT_DIR:-./shannon-replay-results}/run-XXXXXXXX")"',
-    '# Included findings (host verified; impact predicates must still match the target):',
-    ...entries.map((entry) => `# ${entry.vulnerability_id}: ${(entry.title ?? '').replace(/[\r\n]/g, ' ')}`),
-    ...(entries.length ? [] : ['# No verified HTTP replay plans. This script exits with status 1.']),
-    'echo "HTTP replay results: $OUTPUT_DIR"',
-    "python3 - <<'SHANNON_HTTP_REPLAY_PY'",
-    HTTP_REPLAY_PYTHON,
-    `sys.exit(run(json.loads(${JSON.stringify(JSON.stringify(recipes))})))`,
-    'SHANNON_HTTP_REPLAY_PY',
-    '',
-  ];
-  const scriptPath = path.join(dir, REPRODUCTION_SCRIPT_FILENAME);
-  await mkdir(dir, { recursive: true });
-  await writeFile(scriptPath, lines.join('\n'), { mode: 0o700 });
-  await chmod(scriptPath, 0o700);
-  return scriptPath;
+  return writeManualReproductionScript(dir, await loadReplayEntries(dir), targetUrl, includedFindingIds);
 }

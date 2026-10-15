@@ -260,6 +260,9 @@ export function buildAddFindingSchema(exploit: boolean) {
 const AddFindingSupersetSchema = Type.Object({
   ...identityFields(true),
   code_locations: Type.Optional(Type.Array(CodeLocationSchema)),
+  // Host-only evidence choice copied from the exploit collector; report writers cannot override it.
+  http_evidence_display: Type.Optional(stringEnum(['include', 'omit', 'unreviewed'])),
+  verification_method: Type.Optional(Type.String()),
   // Join-only, like code_locations: set by attachQueueCodeLocations from Capella's committed
   // output. Absent from buildAddFindingSchema so the report agent cannot author (fabricate) it.
   sast_source_location: Type.Optional(Type.Union([SASTSourceLocationSchema, Type.Null()])),

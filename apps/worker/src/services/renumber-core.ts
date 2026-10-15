@@ -73,6 +73,10 @@ function scrubEntryText(value: unknown, oldToNew: ReadonlyMap<string, string>): 
         'http_replay',
         'http_replay_verification',
         'http_evidence_receipts',
+        'http_evidence_ids',
+        'reproduction_capture_ids',
+        'proof_of_impact',
+        'browser_evidence_files',
       ].includes(key)
         ? entry
         : scrubEntryText(entry, oldToNew);

@@ -5,6 +5,7 @@
 // normal stdout, stderr, exit status, and request semantics.
 
 import { captureHttpRequest, validateCurlCaptureArguments } from '../services/capture-http-request.js';
+import { captureViaBridge } from '../services/http-capture-bridge.js';
 
 function usage(): never {
   process.stderr.write('Usage: shannon-curl --finding-id ID -- <curl arguments...>\n');
@@ -29,6 +30,25 @@ const deliverablesDir = process.env.SHANNON_DELIVERABLES_DIR;
 if (!deliverablesDir) {
   process.stderr.write('SHANNON_DELIVERABLES_DIR is not set; HTTP capture was not saved.\n');
   process.exit(2);
+}
+
+if (process.env.SHANNON_CAPTURE_SOCKET) {
+  try {
+    const result = await captureViaBridge(process.env.SHANNON_CAPTURE_SOCKET, {
+      directory: deliverablesDir,
+      finding_id: findingId,
+      curl_arguments: curlArgs,
+      cwd: process.cwd(),
+    });
+    if (result.status !== 'success') throw new Error(result.message ?? 'Host capture failed');
+    process.stdout.write(result.stdout ?? '');
+    process.stderr.write(result.stderr ?? '');
+    process.stderr.write(`\nHTTP evidence saved: ${result.capture_id} (${result.file})\n`);
+    process.exit(result.exit_code ?? 1);
+  } catch (error) {
+    process.stderr.write(`HTTP capture failed: ${(error as Error).message}\n`);
+    process.exit(2); // Never resend via a fallback after a host request may have executed.
+  }
 }
 
 const captured = await captureHttpRequest({

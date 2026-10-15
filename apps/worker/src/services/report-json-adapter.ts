@@ -247,7 +247,12 @@ function adaptExploitsMode(data: ReportData): ExploitsReportData {
         // required. The fallbacks keep the superset type honest rather than assuming.
         prerequisites: f.prerequisites ?? '',
         exploitationSteps: (f.exploitation_steps ?? []).map(adaptStep),
-        capturedHttpEvidence: adaptAdditionalSection(evidence.capturedHttpEvidence),
+        ...(evidence.capturedHttpEvidence
+          ? { capturedHttpEvidence: adaptAdditionalSection(evidence.capturedHttpEvidence) }
+          : {}),
+        ...(evidence.verificationEvidence
+          ? { verificationEvidence: adaptAdditionalSection(evidence.verificationEvidence) }
+          : {}),
         remediation: f.remediation,
         ...(f.notes && f.notes.length > 0 && { notes: f.notes.map(adaptStepItem) }),
         ...(evidence.additionalSections.length > 0 && {

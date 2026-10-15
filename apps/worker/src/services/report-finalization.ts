@@ -25,6 +25,7 @@ import type { ExactOutputCommit, ExactOutputFile } from './exact-output-commit.j
 import { writeAndCommitExactFiles } from './exact-output-commit.js';
 import { orderFindings } from './finding-order.js';
 import { readCommittedFile, withGitRepoLock } from './git-manager.js';
+import { writeReproductionScript } from './http-evidence.js';
 import { type PdfProvenance, pdfProvenanceIsCurrent, readPdfProvenance, renderReportPdf } from './pdf-renderer.js';
 import { buildReportCoverage, type ReportData, renderReport } from './report-renderer.js';
 import { renderSarif } from './sarif-renderer.js';
@@ -32,7 +33,7 @@ import { renderSarif } from './sarif-renderer.js';
 const FINALIZATION_SCHEMA_VERSION = 1;
 // Renderer versions feed the input fingerprint: bumping one invalidates adoption of an existing
 // finalization, forcing a re-render instead of adopting output from an older renderer.
-const REPORT_RENDERER_VERSION = '4.13.4';
+const REPORT_RENDERER_VERSION = '4.14.0';
 const SARIF_RENDERER_VERSION = '4.13.1';
 
 interface CommittedArtifactReceipt {
@@ -329,7 +330,9 @@ async function readExistingFinalization(args: {
 
 /**
  * Finalize all canonical report outputs in one exact-path commit, then regenerate the uncommitted
- * PDF from those same canonical bytes. PDF failure is warning-only and cannot change the commit.
+ * replay script and PDF from those same canonical bytes. PDF failure is warning-only and cannot
+ * change the commit. Replay generation also runs when adopting a prior finalization, so report-only
+ * recovery and retries restore a missing script without requiring the Temporal publication step.
  */
 export async function finalizeReport(args: {
   readonly deliverablesDir: string;
@@ -434,6 +437,15 @@ export async function finalizeReport(args: {
     );
     return { canonicalReport, commit, manifest };
   });
+
+  if (args.exploit) {
+    const scriptPath = await writeReproductionScript(
+      args.deliverablesDir,
+      finalized.canonicalReport.report_meta.target,
+      new Set(finalized.canonicalReport.findings.map((finding) => finding.finding_id)),
+    );
+    args.logger.info(`Wrote ${path.basename(scriptPath)} from final report findings`);
+  }
 
   let pdfGenerated = false;
   let pdfProvenance: PdfProvenance | null = null;
