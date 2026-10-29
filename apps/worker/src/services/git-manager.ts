@@ -549,21 +549,22 @@ export async function isAncestor(ancestor: string, descendant: string, sourceDir
 /** Read a file from `HEAD`, returning null only when the Git command cannot supply it. */
 export async function readFileFromHead(sourceDir: string, relPath: string): Promise<string | null> {
   return withGitRepoLock(async () => {
-    const result = await readHeadFileBytes(sourceDir, relPath).catch(() => null);
+    const result = await readGitFileBytes(sourceDir, 'HEAD', relPath).catch(() => null);
     if (result === null) return null;
     return result.exitCode === 0 ? result.stdout : null;
   });
 }
 
-/** Preserve UTF-8 characters (and a leading BOM) across subprocess output chunks. */
-async function readHeadFileBytes(
+/** Read one revision's file, preserving UTF-8 characters and a BOM across output chunks. */
+export async function readGitFileBytes(
   sourceDir: string,
+  revision: string,
   relPath: string,
 ): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     // zx 8 decodes chunks independently, replacing multibyte characters split across chunks.
     // Collect raw buffers and decode once; exact-output verification must see the original text.
-    const child = spawn('git', ['show', `HEAD:${relPath}`], {
+    const child = spawn('git', ['show', `${revision}:${relPath}`], {
       cwd: sourceDir,
       // The failure classifier matches Git's English diagnostics, independent of the host locale.
       env: { ...process.env, LC_ALL: 'C' },
@@ -641,7 +642,7 @@ function transientHeadReadError(operation: string): PentestError {
  */
 export async function readCommittedFile(sourceDir: string, relPath: string): Promise<CommittedReadResult> {
   return withGitRepoLock(async () => {
-    const result = await readHeadFileBytes(sourceDir, relPath).catch(() => {
+    const result = await readGitFileBytes(sourceDir, 'HEAD', relPath).catch(() => {
       throw transientHeadReadError('read-committed-file');
     });
     if (result.exitCode === 0) {

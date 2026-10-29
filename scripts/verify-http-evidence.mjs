@@ -36,6 +36,7 @@ const { surfaceReportOutputs } = await load('services/report-output-surface');
 const { finalizeReport } = await load('services/report-finalization');
 const { registerCaptureBridge } = await load('services/http-capture-bridge');
 const { snapshotCurlInvocation } = await load('services/curl-invocation');
+const { describeArgumentInput, describeFileInput, describeVerificationInputs } = await load('services/reproduction-inputs');
 
 const results = [];
 async function check(name, body) {
@@ -289,6 +290,14 @@ try {
   await check('explicit optional impact verification works, fails on 401, and separates repeat runs', async () => {
     const script = await writeReproductionScript(dir, target, new Set(['INJ-01']));
     const output = `${temporary}/replay-output`;
+    const before = received.length;
+    const instructions = await run('bash', [script, '--requirements', 'INJ-01']);
+    assert.match(instructions.stdout, /BEARER_TOKEN/); assert.match(instructions.stdout, /获取方式/);
+    assert.match(instructions.stdout, /不包含 Authorization: 或 Bearer/);
+    const missing = await run('bash', [script, '--verify', 'INJ-01'], { env: { BEARER_TOKEN: '', OUTPUT_DIR: `${temporary}/verify-missing` } });
+    assert.equal(missing.code, 2); assert.match(missing.stderr, /export BEARER_TOKEN=/);
+    assert.equal(received.length, before);
+    await assert.rejects(stat(`${temporary}/verify-missing`), { code: 'ENOENT' });
     const passed = await run('bash', [script, '--verify', 'INJ-01'], { env: { ...noProxy, BEARER_TOKEN: 'good', OUTPUT_DIR: output } });
     assert.equal(passed.code, 0, passed.stdout + passed.stderr); assert.match(passed.stdout, /INJ-01: passed/);
     const failed = await run('bash', [script, '--verify', 'INJ-01'], { env: { ...noProxy, BEARER_TOKEN: 'bad', OUTPUT_DIR: output } });
@@ -579,6 +588,67 @@ try {
     assert.match(replayed.stdout, /command_completed/); assert.doesNotMatch(replayed.stdout, /: passed/);
     const transport = await run('bash', [script, 'INJ-01'], { env: { ...noProxy, [variable]: 'Authorization: Bearer good', BASE_URL: 'http://127.0.0.1:1', OUTPUT_DIR: `${temporary}/manual-results` } });
     assert.equal(transport.code, 1);
+  });
+  await check('operator guidance preserves header meaning and reports all missing inputs before requests', async () => {
+    const directory = `${temporary}/input-guidance`;
+    const collector = createExploitCollector({ ...strictOptions, deliverablesDir: directory, sourceDir: temporary });
+    const captured = await invoke(collector, 'capture_http_request', {
+      vulnerability_id: 'INJ-02', curl_arguments: ['-sS', '-H', 'Cookie: session=good', '-HAuthorization: Bearer good', `${target}/protected`],
+    });
+    assert.equal(captured.complete, true);
+    assert.equal((await invoke(collector, 'add_exploit', { ...actualExploit, http_evidence_ids: [captured.capture_id] })).status, 'success');
+    const numbered = buildRenumberMap(collector.getAll(), 'injection');
+    await commitAt(directory, { 'injection_exploit_collector.json': collector.getAll(), 'injection_exploit_collector_renumbered.json': numbered.renumbered });
+    const script = await writeReproductionScript(directory, target, new Set(['INJ-01']));
+    const content = await readFile(script, 'utf8');
+    const exported = JSON.parse(Buffer.from(content.match(/manual_main\(json.loads\(base64.b64decode\('([^']+)'\)\)\)/)[1], 'base64').toString());
+    const inputs = exported[0].required_inputs;
+    const cookie = inputs.find((input) => input.header_name === 'Cookie');
+    const bearer = inputs.find((input) => input.header_name === 'Authorization');
+    assert.equal(cookie.variable, 'INJ_01_COMMAND_1_HEADER_1');
+    assert.equal(cookie.example, 'Cookie: session=<COOKIE_VALUE>');
+    assert.equal(bearer.example, 'Authorization: Bearer <HEADER_VALUE>');
+    assert.doesNotMatch(JSON.stringify(exported), /session=good|Bearer good/);
+    const before = received.length;
+    const shown = await run('bash', [script, '--show', 'INJ-01']);
+    const help = await run('bash', [script, '--requirements', 'INJ-01']);
+    for (const result of [shown, help]) {
+      assert.equal(result.code, 0); assert.match(result.stdout, /Cookie 请求头/);
+      assert.match(result.stdout, /F12 → Network/); assert.match(result.stdout, /Request Headers/);
+      assert.match(result.stdout, /export INJ_01_COMMAND_1_HEADER_1='Cookie: session=<COOKIE_VALUE>'/);
+      assert.doesNotMatch(result.stdout, /session=good|Bearer good/);
+    }
+    const environment = { [cookie.variable]: '', [bearer.variable]: '', OUTPUT_DIR: `${temporary}/guidance-missing` };
+    const missing = await run('bash', [script, 'INJ-01'], { env: environment });
+    assert.equal(missing.code, 2);
+    for (const input of inputs) assert.ok(missing.stderr.includes(input.variable));
+    assert.match(missing.stderr, /获取方式/); assert.match(missing.stderr, /填写格式/); assert.match(missing.stderr, /设置示例/);
+    await assert.rejects(stat(environment.OUTPUT_DIR), { code: 'ENOENT' });
+    const malformed = await run('bash', [script, 'INJ-01'], { env: { ...environment, [cookie.variable]: 'session=good', [bearer.variable]: 'Authorization: Bearer good' } });
+    assert.equal(malformed.code, 2); assert.match(malformed.stderr, /必须以 Cookie: 开头/);
+    assert.doesNotMatch(malformed.stderr, /session=good|Bearer good/);
+    assert.equal(received.length, before);
+    const replayed = await run('bash', [script, 'INJ-01'], { env: { ...noProxy, ...environment, [cookie.variable]: 'Cookie: session=good', [bearer.variable]: 'Authorization: Bearer good' } });
+    assert.equal(replayed.code, 0, replayed.stderr); assert.equal(received.length, before + 1);
+    assert.equal(received.at(-1).headers.cookie, 'session=good');
+    assert.equal(received.at(-1).headers.authorization, 'Bearer good');
+    assert.doesNotMatch(replayed.stdout + replayed.stderr, /session=good|Bearer good/);
+  });
+  await check('input guidance covers values, files and extracted verification variables without exporting secrets', async () => {
+    const describe = (option, value) => describeArgumentInput('FIXTURE_INPUT', { option, value, index: 1, prefix: '' });
+    assert.equal(describe('cookie', 'session=private-value; other=another-value').example, 'session=<COOKIE_VALUE>; other=<COOKIE_VALUE>');
+    assert.match(describe('cookie', 'session=private-value').format, /不包含 Cookie:/);
+    for (const option of ['oauth2-bearer', 'user', 'proxy-user', 'url', 'data-raw', 'form', 'stdin', 'proxy']) {
+      const input = describe(option, 'private-value');
+      assert.ok(input.source && input.format && input.example); assert.ok(!JSON.stringify(input).includes('private-value'));
+    }
+    assert.equal(describeFileInput('INPUT_FILE', '/fixture/body.json').file, true);
+    const inputs = describeVerificationInputs({ steps: [
+      { method: 'POST', url: '${BASE_URL}/login', body_json: { username: '${USERNAME}', password: '${PASSWORD}', otp: '${OTP}' }, save_json: { DYNAMIC_TOKEN: 'data.token' } },
+      { method: 'GET', url: '${BASE_URL}/protected', headers: { Cookie: '${COOKIE}', Authorization: 'Bearer ${DYNAMIC_TOKEN}' } },
+    ] });
+    assert.deepEqual(inputs.map((input) => input.variable), ['COOKIE', 'USERNAME', 'PASSWORD', 'OTP']);
+    assert.match(inputs[0].format, /不包含 Cookie:/);
   });
   await check('missing browser files and path escapes are rejected while actual logs are accepted', async () => {
     const sourceDir = `${temporary}/browser-source`; await mkdir(sourceDir); await writeFile(`${sourceDir}/console.txt`, 'XSS_EXEC');

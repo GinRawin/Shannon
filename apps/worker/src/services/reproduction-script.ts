@@ -13,6 +13,12 @@ import {
   hasLiteralReplayAuthentication,
   hasVerifiedReplay,
 } from './http-replay.js';
+import {
+  describeArgumentInput,
+  describeFileInput,
+  describeVerificationInputs,
+  type ReproductionInput,
+} from './reproduction-inputs.js';
 
 interface ReproductionEntry {
   vulnerability_id?: string;
@@ -47,7 +53,8 @@ export async function writeManualReproductionScript(
   const recipes = [];
   for (const entry of retained) {
     const commands: Array<Record<string, unknown>> = [],
-      secrets: string[] = [];
+      secrets: string[] = [],
+      requirements: ReproductionInput[] = [];
     const ids =
       entry.reproduction_capture_ids ??
       (entry.http_evidence_display === 'include' ? (entry.http_evidence_ids ?? []) : []);
@@ -68,6 +75,7 @@ export async function writeManualReproductionScript(
       const commandPrefix: string = `${entry.vulnerability_id.replaceAll('-', '_')}_COMMAND_${commands.length + 1}`;
       const parsed = curlArguments(invocation.argv).arguments;
       const argv: Array<string | { variable: string; prefix: string }> = [...invocation.argv];
+      const requiredInputs: ReproductionInput[] = [];
       for (const [index, variable] of Object.entries(invocation.variables)) {
         const arg = parsed.find((item) => item.index === Number(index));
         if (!arg) throw new Error('Invalid capture variable binding');
@@ -75,8 +83,21 @@ export async function writeManualReproductionScript(
         if (arg.option === 'header')
           secrets.push((arg.value ?? '').replace(/^[^:]+:\s*/, '').replace(/^Bearer\s+/i, ''));
         argv[Number(index)] = { variable: `${commandPrefix}_${variable}`, prefix: arg.prefix };
+        requiredInputs.push(describeArgumentInput(`${commandPrefix}_${variable}`, arg));
       }
       secrets.push(...(invocation.secret_values ?? []));
+      for (const input of invocation.inputs) {
+        if (input.variable) requiredInputs.push(describeFileInput(`${commandPrefix}_${input.variable}`, input.path));
+      }
+      if (invocation.stdin_variable)
+        requiredInputs.push(
+          describeArgumentInput(`${commandPrefix}_${invocation.stdin_variable}`, {
+            option: 'stdin',
+            index: -1,
+            prefix: '',
+          }),
+        );
+      requirements.push(...requiredInputs);
       commands.push({
         capture_id: id,
         argv,
@@ -108,6 +129,15 @@ export async function writeManualReproductionScript(
       reason: redact(entry.http_evidence_reason ?? 'Legacy evidence selection has not been reviewed.'),
       steps: (entry.exploitation_steps ?? []).map(redact),
       commands,
+      target_origin: new URL(targetUrl).origin,
+      required_inputs: requirements.map((input) => ({
+        ...input,
+        label: redact(input.label),
+        source: redact(input.source),
+        format: redact(input.format),
+        example: redact(input.example),
+      })),
+      verification_inputs: verified && entry.http_replay ? describeVerificationInputs(entry.http_replay) : [],
       // A verified structured plan is optional and executes ONLY under --verify ID.
       verified: verified
         ? { finding_id: entry.vulnerability_id, base_url: new URL(targetUrl).origin, plan: entry.http_replay }
@@ -122,6 +152,8 @@ export async function writeManualReproductionScript(
     'set -euo pipefail',
     'umask 077',
     '# Requires Bash, Python 3 and curl. No requests are sent without an explicit selection.',
+    '# 查看每项输入的获取方式、填写格式和 export 示例：bash reproduce.sh --requirements FINDING_ID',
+    '# 查看完整步骤：bash reproduce.sh --show FINDING_ID。示例中的 <...> 需替换为自己的当前有效值。',
     ...retained.map((entry) => `# ${entry.vulnerability_id}: ${(entry.title ?? '').replace(/[\r\n]/g, ' ')}`),
     'python3 - "$@" <<\'SHANNON_MANUAL_REPRODUCTION_PY\'',
     source,
@@ -148,6 +180,48 @@ def required(name):
     value = os.environ.get(name)
     if value is None or value == "": raise ValueError("Missing environment variable: " + name)
     return value
+
+def print_input(spec, stream=sys.stdout):
+    name = spec["variable"]
+    print("  " + name + " — " + spec["label"], file=stream)
+    print("    获取方式：" + spec["source"], file=stream)
+    print("    填写格式：" + spec["format"], file=stream)
+    print("    设置示例：export " + name + "=" + shlex.quote(spec["example"]), file=stream)
+    print("    当前状态：" + ("已设置（值不显示）" if os.environ.get(name) else "未设置"), file=stream)
+
+def show_requirements(entry, stream=sys.stdout):
+    print("\n" + entry["finding_id"] + " 普通重放所需输入：", file=stream)
+    inputs = entry["required_inputs"]
+    if not inputs: print("  无需额外环境变量。", file=stream)
+    for spec in inputs: print_input(spec, stream)
+    print("\n影响验证（--verify " + entry["finding_id"] + "）所需输入：", file=stream)
+    if not entry.get("verified"):
+        print("  此条目没有自动影响断言，请使用普通重放或人工步骤。", file=stream)
+    else:
+        if not entry["verification_inputs"]: print("  无需额外环境变量。", file=stream)
+        for spec in entry["verification_inputs"]: print_input(spec, stream)
+    print("  普通重放与 --verify 使用独立变量，请按各自说明设置。", file=stream)
+    print("  BASE_URL 可选，默认目标：" + entry["target_origin"] + "；覆盖时仅填写 http(s)://主机[:端口]。", file=stream)
+    print("  OUTPUT_DIR 可选，默认 ./shannon-replay-results；<...> 是示例占位符，需替换为当前有效值。", file=stream)
+
+def check_inputs(entries, verify):
+    invalid = False
+    for entry in entries:
+        specs = entry["verification_inputs"] if verify else entry["required_inputs"]
+        for spec in specs:
+            value = os.environ.get(spec["variable"], "")
+            error = None
+            if not value: error = "缺少必填值"
+            elif spec.get("header_name") and ("\r" in value or "\n" in value or value.partition(":")[0].lower() != spec["header_name"].lower()):
+                error = "请求头格式错误，必须以 " + spec["header_name"] + ": 开头且不包含换行"
+            elif spec.get("file") and not pathlib.Path(value).is_file(): error = "输入文件不存在或不是普通文件"
+            if error:
+                invalid = True
+                print(entry["finding_id"] + ": " + error, file=sys.stderr)
+                print_input(spec, sys.stderr)
+    if invalid:
+        print("未发送任何请求。完整说明：bash reproduce.sh --requirements FINDING_ID", file=sys.stderr)
+        sys.exit(2)
 
 def origin_override(url):
     override = os.environ.get("BASE_URL", "")
@@ -191,6 +265,7 @@ def prepare_command(command, directory):
 
 def show_entry(entry):
     print(entry["finding_id"] + ": " + entry["title"] + " [" + entry["method"] + "]")
+    show_requirements(entry)
     print("  Evidence selection: " + entry["reason"])
     for index, step in enumerate(entry["steps"], 1): print("\nStep %d: %s" % (index, step))
     for command in entry["commands"]:
@@ -199,16 +274,12 @@ def show_entry(entry):
             preview = "curl " + " ".join(shlex.quote(value) if isinstance(value, str) else shlex.quote(value["prefix"]) + '"' + chr(36) + '{' + value["variable"] + ':?}"' for value in command["argv"])
             print("  Recorded command (authentication parameterized; inputs restored when executed):\n  " + preview)
         for reason in command.get("manual_reasons", []): print("  Manual preparation: " + reason)
-        for value in command.get("argv", []):
-            if isinstance(value, dict): print("  Required environment variable: " + value["variable"] + " (full argument value, without its option prefix)")
-        for item in command.get("inputs", []):
-            if item.get("variable"): print("  Required input file path: " + item["variable"])
-        if command.get("stdin_variable"): print("  Required stdin environment variable: " + command["stdin_variable"])
 
 def manual_main(entries):
     args = sys.argv[1:]
     if not args or args in (["--list"], ["--help"]):
-        print("Usage: bash reproduce.sh [FINDING_ID | --show FINDING_ID | --all | --verify FINDING_ID]")
+        print("Usage: bash reproduce.sh [FINDING_ID | --requirements FINDING_ID | --show FINDING_ID | --all | --verify FINDING_ID]")
+        print("先用 --requirements 查看输入的获取方式、格式和 export 示例；--show 查看完整步骤。这两个命令不发送请求。")
         for entry in entries:
             print(entry["finding_id"] + ": " + entry["title"] + " (" + str(len(entry["commands"])) + " captured commands; " + entry["method"] + ")")
         if not entries: print("No retained findings.")
@@ -216,12 +287,19 @@ def manual_main(entries):
     by_id = {entry["finding_id"]: entry for entry in entries}
     verify = len(args) == 2 and args[0] == "--verify"
     showing = len(args) == 2 and args[0] == "--show"
+    requirements = len(args) == 2 and args[0] == "--requirements"
     if args == ["--all"]: selected = entries
-    elif (len(args) == 1 and args[0] in by_id) or ((verify or showing) and args[1] in by_id): selected = [by_id[args[-1]]]
+    elif (len(args) == 1 and args[0] in by_id) or ((verify or showing or requirements) and args[1] in by_id): selected = [by_id[args[-1]]]
     else: print("Unknown finding or arguments", file=sys.stderr); sys.exit(2)
     if showing:
         for entry in selected: show_entry(entry)
         return
+    if requirements:
+        for entry in selected: show_requirements(entry)
+        return
+    if verify and not selected[0].get("verified"):
+        print("No host-verified impact assertions for this finding", file=sys.stderr); sys.exit(2)
+    check_inputs(selected, verify)
     # Resolve every required value/input before sending any request in the selected set.
     root = pathlib.Path(os.environ.get("OUTPUT_DIR", "./shannon-replay-results")).resolve()
     root.mkdir(parents=True, exist_ok=True)

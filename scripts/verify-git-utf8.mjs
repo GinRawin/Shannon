@@ -14,6 +14,7 @@ const { readCommittedFile, readFileFromHead, classifyHeadReadFailure } = await l
 const { writeAndCommitExactFiles } = await load('services/exact-output-commit');
 const { compactReportFindings } = await load('services/compaction-core');
 const { finalizeReport } = await load('services/report-finalization');
+const { readFileAtCheckpoint, finalProgressIsCoherent } = await load('services/report-checkpoints');
 const temporary = await mkdtemp(path.join(tmpdir(), 'shannon-git-utf8-'));
 const logger = { info() {}, warn() {}, error() {} };
 const digest = (value) => createHash('sha256').update(value).digest('hex');
@@ -44,7 +45,7 @@ try {
   await git(['config', 'user.name', 'UTF-8 regression']);
   await git(['config', 'user.email', 'utf8@example.invalid']);
 
-  await check('split UTF-8 code points, BOM and missing final newline survive both HEAD readers', async () => {
+  await check('split UTF-8 code points, BOM and missing final newline survive HEAD and checkpoint readers', async () => {
     const bin = path.join(temporary, 'bin');
     await mkdir(bin);
     const executable = path.join(bin, 'git');
@@ -67,6 +68,9 @@ emit();
     try {
       assert.deepEqual(await readCommittedFile(temporary, 'split.txt'), { state: 'present', contents });
       assert.equal(await readFileFromHead(temporary, 'split.txt'), contents);
+      assert.deepEqual(await readFileAtCheckpoint(temporary, 'fixture-checkpoint', 'split.txt'), {
+        state: 'present', contents,
+      });
     } finally {
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
@@ -104,6 +108,7 @@ emit();
   await git(['add', 'report.json', 'empty.txt', 'ascii.txt', 'bom.txt',
     'authz_renumber_map.json', 'authz_exploit_collector_renumbered.json']);
   await git(['commit', '-qm', 'Synthetic Chinese report']);
+  const modelCheckpoint = (await git(['rev-parse', 'HEAD'])).toString('utf8').trim();
 
   await check('large multilingual report is byte-identical across repeated reads', async () => {
     assert.ok(Buffer.byteLength(originalJson) > 2 * 1024 * 1024);
@@ -112,9 +117,15 @@ emit();
       assert.equal(result.state, 'present');
       assert.equal(digest(result.contents), digest(originalJson));
       assert.equal(digest(await readFileFromHead(temporary, 'report.json')), digest(originalJson));
+      const checkpointRead = await readFileAtCheckpoint(temporary, modelCheckpoint, 'report.json');
+      assert.equal(checkpointRead.state, 'present');
+      assert.equal(digest(checkpointRead.contents), digest(originalJson));
     }
     for (const filename of ['empty.txt', 'ascii.txt', 'bom.txt']) {
       assert.deepEqual(await readCommittedFile(temporary, filename), {
+        state: 'present', contents: await readFile(path.join(temporary, filename), 'utf8'),
+      });
+      assert.deepEqual(await readFileAtCheckpoint(temporary, modelCheckpoint, filename), {
         state: 'present', contents: await readFile(path.join(temporary, filename), 'utf8'),
       });
     }
@@ -123,6 +134,7 @@ emit();
   await check('absent, corrupt and transient errors keep their existing classification', async () => {
     assert.deepEqual(await readCommittedFile(temporary, 'absent.txt'), { state: 'absent' });
     assert.equal(await readFileFromHead(temporary, 'absent.txt'), null);
+    assert.deepEqual(await readFileAtCheckpoint(temporary, modelCheckpoint, 'absent.txt'), { state: 'absent' });
     assert.equal(classifyHeadReadFailure('fatal: bad object HEAD'), 'corrupt');
     assert.equal(classifyHeadReadFailure('Permission denied; bad object HEAD'), 'transient');
     assert.equal(classifyHeadReadFailure('unexpected repository failure'), 'transient');
@@ -131,6 +143,9 @@ emit();
       name: 'PentestError', code: 'GIT_CHECKPOINT_FAILED', retryable: true,
     });
     assert.equal(await readFileFromHead(missingRepository, 'report.json'), null);
+    await assert.rejects(readFileAtCheckpoint(missingRepository, modelCheckpoint, 'report.json'), {
+      name: 'PentestError', code: 'GIT_CHECKPOINT_FAILED', retryable: true,
+    });
     const sha = (await git(['rev-parse', 'HEAD:ascii.txt'])).toString('utf8').trim();
     const objectPath = path.join(temporary, '.git/objects', sha.slice(0, 2), sha.slice(2));
     const originalObject = await readFile(objectPath);
@@ -138,6 +153,7 @@ emit();
       await chmod(objectPath, 0o644);
       await writeFile(objectPath, '');
       assert.deepEqual(await readCommittedFile(temporary, 'ascii.txt'), { state: 'corrupt' });
+      assert.deepEqual(await readFileAtCheckpoint(temporary, modelCheckpoint, 'ascii.txt'), { state: 'corrupt' });
     } finally {
       await writeFile(objectPath, originalObject);
     }
@@ -180,6 +196,29 @@ emit();
     const repeated = await finalizeReport(options);
     assert.equal(repeated.commit.alreadyCommitted, true);
     assert.equal(repeated.commit.commitHash, finalized.commit.commitHash);
+
+    // Exercise the proof used by persistFinalizedReportProgress, beyond output generation.
+    const progress = {
+      stage: 'finalized', renumber_failed_classes: [], partial_reasons: [],
+      model_checkpoint: modelCheckpoint, canonical_checkpoint: compacted.commit.commitHash,
+      final_checkpoint: finalized.commit.commitHash,
+      finalization_manifest_sha256: digest(`${JSON.stringify(finalized.manifest, null, 2)}\n`),
+      sarif_disposition: finalized.manifest.artifacts.sarif.disposition,
+    };
+    assert.equal(await finalProgressIsCoherent(temporary, progress), true);
+    assert.equal(await finalProgressIsCoherent(temporary, {
+      ...progress, finalization_manifest_sha256: '0'.repeat(64),
+    }), false);
+    // Historical reads must honor the checkpoint even after compaction/finalization change HEAD.
+    assert.deepEqual(await readFileAtCheckpoint(temporary, modelCheckpoint, 'report.json'), {
+      state: 'present', contents: originalJson,
+    });
+    await writeFile(path.join(temporary, finalized.manifest.artifacts.markdown.path), 'tampered report\n');
+    await git(['add', finalized.manifest.artifacts.markdown.path]);
+    await git(['commit', '-qm', 'Tamper with finalized report fixture']);
+    assert.equal(await finalProgressIsCoherent(temporary, {
+      ...progress, final_checkpoint: (await git(['rev-parse', 'HEAD'])).toString('utf8').trim(),
+    }), false);
   });
 } finally {
   await rm(temporary, { recursive: true, force: true });
