@@ -114,7 +114,7 @@ Exploit Agent 读取对应类别的 exploitation queue，对候选漏洞进行�
 
 ## 7. Record：重放验证与数据包登记
 
-Record Agent 在 Exploit Agent 完成后读取已发现漏洞及其利用命令，重放能够安全复现的 HTTP 请求，并保存真实请求/响应数据包。它还会检查是否存在对应的前端入口；找到时会记录页面 URL、按钮或输入框位置和触发步骤，无法确认时会明确标注。只有重放成功且响应再次证明影响的漏洞会进入最终报告；失败、无法安全重放或结果不确定的项目会写入 `.shannon/deliverables/pending_manual_verification.md`，等待人工复核。
+Exploit Agent 为每个 HTTP 可复现的利用保存结构化 `http_replay` 计划，包含请求步骤和至少一条预期状态码及具体影响内容断言。Record 由宿主执行该计划、检查响应断言并保存每次真实请求/响应数据包；单纯有完整数据包不算验证通过。缺少计划、断言失败、执行失败或证明依赖浏览器的项目会进入 `.shannon/deliverables/pending_manual_verification.md`。Record 还会检查对应的前端入口并记录页面 URL 和触发步骤。只有宿主断言通过且抓包完整的利用发现会以 HTTP 验证结果进入最终报告。
 
 主要输出包括 `record_verification.json`、`pending_manual_verification.md` 和各类别的 `*_recorded_exploitation_evidence.md`。采集到的 HTTP 数据包保存在 `.shannon/deliverables/http-exchanges/`。
 

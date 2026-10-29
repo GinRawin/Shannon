@@ -1082,6 +1082,7 @@ export async function runMiscellaneousExploitAgent(input: ActivityInput): Promis
 /** Replay documented exploit proof after exploration has finished; unresolved results are durable but report-excluded. */
 export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics> {
   const { createRecordCollector } = await import('../collectors/record-collector.js');
+  const { verifyHttpReplay } = await import('../services/http-replay.js');
   const classes: ReconciliationClass[] = ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous'];
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   const validIds = new Set<string>();
@@ -1104,12 +1105,53 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
   const config = await container.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
   if (isErr(config)) throw deterministicActivityFailure(config.error, 'ConfigurationError');
   const captureRedactions = configuredCaptureRedactions(config.value?.authentication?.credentials);
+  const verificationPlans = new Map<string, import('../services/http-replay.js').HttpReplayPlan>();
+  for (const vulnerabilityClass of classes) {
+    const collectorPath = path.join(
+      dir,
+      input.exploreExpansion
+        ? `explore_expansion_${vulnerabilityClass}_exploit_collector.json`
+        : `${vulnerabilityClass}_exploit_collector.json`,
+    );
+    try {
+      const entries = JSON.parse(await fs.readFile(collectorPath, 'utf8')) as Array<{
+        vulnerability_id?: unknown;
+        status?: unknown;
+        http_replay?: import('../services/http-replay.js').HttpReplayPlan | null;
+      }>;
+      for (const entry of entries)
+        if (entry.status === 'exploited' && typeof entry.vulnerability_id === 'string' && entry.http_replay)
+          verificationPlans.set(entry.vulnerability_id, entry.http_replay);
+    } catch {
+      // Empty or absent class collectors have no replay plans.
+    }
+  }
+  const credentials = config.value?.authentication?.credentials;
+  const replayVariables: Record<string, string> = {
+    BASE_URL: new URL(input.webUrl).origin,
+    ...(credentials?.username ? { USERNAME: credentials.username } : {}),
+    ...(credentials?.password ? { PASSWORD: credentials.password } : {}),
+    ...(credentials?.totp_secret ? { OTP: credentials.totp_secret } : {}),
+    ...(credentials?.email_login?.address ? { USERNAME: credentials.email_login.address } : {}),
+    ...(credentials?.email_login?.password ? { PASSWORD: credentials.email_login.password } : {}),
+    ...(credentials?.email_login?.totp_secret ? { OTP: credentials.email_login.totp_secret } : {}),
+  };
   const collector = createRecordCollector({
     deliverablesDir: dir,
     targetUrl: input.webUrl,
     sourceDir: input.repoPath,
     validIds,
     secrets: captureRedactions.map((item) => item.value),
+    verificationPlans,
+    verifyReplay: (findingId, plan) =>
+      verifyHttpReplay({
+        findingId,
+        plan,
+        variables: replayVariables,
+        deliverablesDir: dir,
+        targetUrl: input.webUrl,
+        secrets: captureRedactions.map((item) => item.value),
+      }),
   });
   const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
     const { renderExploitDeliverable } = await import('../services/exploit-renderer.js');
@@ -1135,7 +1177,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
       const renumberedCollectorPath = input.exploreExpansion
         ? sourceCollectorPath
         : path.join(deliverablesPath, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
-      let sourceEntries: Array<Record<string, unknown> & { vulnerability_id?: string; status?: string }>;
+      let sourceEntries: Array<Record<string, unknown> & { vulnerability_id?: string; status?: string; http_replay_verification?: unknown }>;
       try {
         sourceEntries = JSON.parse(await fs.readFile(sourceCollectorPath, 'utf8')) as Array<
           Record<string, unknown> & { vulnerability_id?: string; status?: string }
@@ -1167,6 +1209,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           entry.http_evidence_display = 'include';
           entry.verification_method = 'http';
           entry.http_evidence_reason = verdict.reason;
+          entry.http_replay_verification = verdict.http_replay_verification;
         } else if (entry.status === 'exploited') {
           entry.http_evidence_ids = [];
           entry.http_evidence_receipts = [];
@@ -1174,6 +1217,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           entry.verification_method = 'other';
           entry.http_evidence_reason =
             verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
+          delete entry.http_replay_verification;
         }
       }
       await atomicWrite(sourceCollectorPath, `${JSON.stringify(sourceEntries, null, 2)}\n`);
@@ -1201,6 +1245,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           entry.http_evidence_display = 'include';
           entry.verification_method = 'http';
           entry.http_evidence_reason = verdict.reason;
+          entry.http_replay_verification = verdict.http_replay_verification;
         } else if (entry.status === 'exploited') {
           entry.http_evidence_ids = [];
           entry.http_evidence_receipts = [];
@@ -1208,6 +1253,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           entry.verification_method = 'other';
           entry.http_evidence_reason =
             verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
+          delete entry.http_replay_verification;
         }
       }
       if (entries !== sourceEntries)
