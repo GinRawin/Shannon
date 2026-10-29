@@ -23,28 +23,32 @@ interface DeliverableFile {
 }
 
 const DELIVERABLE_BY_CLASS: Readonly<
-  Record<ReconciliationClass, { readonly name: string; readonly exploit: string; readonly analysis: string }>
+  Record<ReconciliationClass, { readonly name: string; readonly exploit: string; readonly recorded: string; readonly analysis: string }>
 > = Object.freeze({
   injection: {
     name: 'Injection',
     exploit: 'injection_exploitation_evidence.md',
+    recorded: 'injection_recorded_exploitation_evidence.md',
     analysis: 'injection_findings.md',
   },
-  xss: { name: 'XSS', exploit: 'xss_exploitation_evidence.md', analysis: 'xss_findings.md' },
+  xss: { name: 'XSS', exploit: 'xss_exploitation_evidence.md', recorded: 'xss_recorded_exploitation_evidence.md', analysis: 'xss_findings.md' },
   auth: {
     name: 'Authentication',
     exploit: 'auth_exploitation_evidence.md',
+    recorded: 'auth_recorded_exploitation_evidence.md',
     analysis: 'auth_findings.md',
   },
-  ssrf: { name: 'SSRF', exploit: 'ssrf_exploitation_evidence.md', analysis: 'ssrf_findings.md' },
+  ssrf: { name: 'SSRF', exploit: 'ssrf_exploitation_evidence.md', recorded: 'ssrf_recorded_exploitation_evidence.md', analysis: 'ssrf_findings.md' },
   authz: {
     name: 'Authorization',
     exploit: 'authz_exploitation_evidence.md',
+    recorded: 'authz_recorded_exploitation_evidence.md',
     analysis: 'authz_findings.md',
   },
   miscellaneous: {
     name: 'Miscellaneous',
     exploit: 'miscellaneous_exploitation_evidence.md',
+    recorded: 'miscellaneous_recorded_exploitation_evidence.md',
     analysis: 'miscellaneous_findings.md',
   },
 });
@@ -112,7 +116,7 @@ async function assembleFinalReportInternal(
     const definition = DELIVERABLE_BY_CLASS[vulnerabilityClass];
     let paths: readonly string[];
     if (options.exploit === true) {
-      paths = [definition.exploit];
+      paths = [definition.recorded];
     } else if (options.exploit === false) {
       paths = [definition.analysis];
     } else {

@@ -26,6 +26,7 @@ export const ALL_AGENTS = [
   'ssrf-exploit',
   'authz-exploit',
   'miscellaneous-exploit',
+  'record',
   'report',
 ] as const;
 

@@ -51,5 +51,15 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
   if (agentName === 'report') {
     paths.push(REPORT_JSON_FILENAME);
   }
+  if (agentName === 'record') {
+    paths.push('record_verification.json', 'record_verified_finding_ids.json', 'pending_manual_verification.md', 'http-exchanges');
+    for (const vulnerabilityClass of ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous']) {
+      paths.push(
+        `${vulnerabilityClass}_recorded_exploitation_evidence.md`,
+        `${vulnerabilityClass}_exploit_collector.json`,
+        `${vulnerabilityClass}_exploit_collector_renumbered.json`,
+      );
+    }
+  }
   return [...new Set(paths)];
 }

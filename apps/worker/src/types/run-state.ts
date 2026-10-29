@@ -914,6 +914,7 @@ function expectedAgentsFor(exploit: boolean): AgentName[] {
     for (const vulnerabilityClass of FIXED_ANALYSIS_CLASSES) {
       expected.push(`${vulnerabilityClass}-exploit` as AgentName);
     }
+    expected.push('record');
   }
   expected.push('report');
   return expected;
@@ -922,7 +923,13 @@ function expectedAgentsFor(exploit: boolean): AgentName[] {
 function isExpectedAgentSet(value: unknown, exploit: boolean): value is readonly AgentName[] {
   if (!Array.isArray(value) || value.some((agent) => typeof agent !== 'string')) return false;
   const initial = expectedAgentsFor(exploit);
-  return arraysEqual(value, initial) || arraysEqual(value, [...initial, 'miscellaneous-exploit']);
+  const legacy = initial.filter((agent) => agent !== 'record');
+  return (
+    arraysEqual(value, initial) ||
+    arraysEqual(value, [...initial, 'miscellaneous-exploit']) ||
+    arraysEqual(value, legacy) ||
+    arraysEqual(value, [...legacy, 'miscellaneous-exploit'])
+  );
 }
 
 function isOrderedClassSubset(

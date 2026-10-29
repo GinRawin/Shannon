@@ -314,7 +314,7 @@ export interface FindingCollector {
   getAll(): AddFindingInput[];
 }
 
-export function createFindingCollector(exploit: boolean): FindingCollector {
+export function createFindingCollector(exploit: boolean, allowedFindingIds?: ReadonlySet<string>): FindingCollector {
   const findings: AddFindingInput[] = [];
   const schema = buildAddFindingSchema(exploit);
 
@@ -325,6 +325,13 @@ export function createFindingCollector(exploit: boolean): FindingCollector {
       'Record a single finding as structured data for report rendering and DB persistence. Call once per finding after grouping/dedup. Duplicate finding_ids are rejected.',
     parameters: schema,
     async execute(_toolCallId, input) {
+      if (exploit && allowedFindingIds && !allowedFindingIds.has(input.finding_id)) {
+        return errorResult(
+          `Finding ${input.finding_id} was not replay-verified by the record stage and cannot enter the final report.`,
+          'UnverifiedFindingError',
+          false,
+        );
+      }
       const existing = findings.find((f) => f.finding_id === input.finding_id);
       if (existing) {
         return errorResult(

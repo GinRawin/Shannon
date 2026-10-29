@@ -631,24 +631,7 @@ async function runExploitAgentWithCollector(
   const queuePath = path.join(dir, `${vulnClass}_exploitation_queue.json`);
   const { validIds, idToType } = await readExploitQueue(queuePath);
 
-  const replayContainer = getOrCreateContainer(
-    input.workflowId,
-    buildSessionMetadata(input),
-    buildContainerConfig(input),
-  );
-  const replayConfig = await replayContainer.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
-  if (isErr(replayConfig)) throw deterministicActivityFailure(replayConfig.error, 'ConfigurationError');
-  const collector = createExploitCollector({
-    requireHttpEvidence: true,
-    sourceDir: input.repoPath,
-    vulnClass,
-    validIds,
-    deliverablesDir: dir,
-    targetUrl: input.webUrl,
-    secrets: configuredCaptureRedactions(replayConfig.value?.authentication?.credentials).map(
-      (redaction) => redaction.value,
-    ),
-  });
+  const collector = createExploitCollector({ vulnClass, validIds });
 
   const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
     const logger = createActivityLogger();
@@ -675,20 +658,7 @@ async function runExploitAgentWithCollector(
     logger.info(`Wrote ${vulnClass}_exploitation_evidence.md from structured data (${markdown.length} bytes)`);
   };
 
-  const { registerCaptureBridge } = await import('../services/http-capture-bridge.js');
-  const captureTool = collector.tools.find((tool) => tool.name === 'capture_http_request');
-  if (!captureTool) throw new Error('Exploit HTTP capture tool is unavailable');
-  const unregister = await registerCaptureBridge({
-    directory: dir,
-    findingIds: validIds,
-    cwd: input.repoPath,
-    tool: captureTool,
-  });
-  try {
-    return await runAgentActivity(agentName, input, collector.tools, writeDeliverable);
-  } finally {
-    unregister();
-  }
+  return runAgentActivity(agentName, input, collector.tools, writeDeliverable);
 }
 
 export async function runInjectionExploitAgent(input: ActivityInput): Promise<AgentMetrics> {
@@ -714,6 +684,186 @@ export async function runAuthzExploitAgent(input: ActivityInput): Promise<AgentM
 /** Run the ordinary collector-backed agent after durable admission appended it to the expected set. */
 export async function runMiscellaneousExploitAgent(input: ActivityInput): Promise<AgentMetrics> {
   return runExploitAgentWithCollector('miscellaneous-exploit', 'miscellaneous', input);
+}
+
+/** Replay documented exploit proof after exploration has finished; unresolved results are durable but report-excluded. */
+export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics> {
+  const { createRecordCollector } = await import('../collectors/record-collector.js');
+  const classes: ReconciliationClass[] = ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous'];
+  const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+  const validIds = new Set<string>();
+  for (const vulnerabilityClass of classes) {
+    const queueFile = path.join(dir, `${vulnerabilityClass}_exploitation_queue.json`);
+    try {
+      const queue = JSON.parse(await fs.readFile(queueFile, 'utf8')) as { vulnerabilities?: Array<{ ID?: unknown }> };
+      for (const vulnerability of queue.vulnerabilities ?? [])
+        if (typeof vulnerability.ID === 'string') validIds.add(vulnerability.ID);
+    } catch {
+      // An absent class queue simply means there were no findings of that class.
+    }
+  }
+  const container = getOrCreateContainer(input.workflowId, buildSessionMetadata(input), buildContainerConfig(input));
+  const config = await container.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
+  if (isErr(config)) throw deterministicActivityFailure(config.error, 'ConfigurationError');
+  const captureRedactions = configuredCaptureRedactions(config.value?.authentication?.credentials);
+  const collector = createRecordCollector({
+    deliverablesDir: dir,
+    targetUrl: input.webUrl,
+    sourceDir: input.repoPath,
+    validIds,
+    secrets: captureRedactions.map((item) => item.value),
+  });
+  const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
+    const { renderExploitDeliverable } = await import('../services/exploit-renderer.js');
+    const redact = (value: string) => captureRedactions.reduce((text, item) => text.split(item.value).join(item.placeholder), value);
+    const verdicts = collector.getAll().map((verdict) => ({
+      ...verdict,
+      reason: redact(verdict.reason),
+      frontend_url: verdict.frontend_url === null ? null : redact(verdict.frontend_url),
+      frontend_trigger: verdict.frontend_trigger === null ? null : redact(verdict.frontend_trigger),
+      frontend_reason: redact(verdict.frontend_reason),
+    }));
+    const byId = new Map(verdicts.map((verdict) => [verdict.finding_id, verdict]));
+    const pending: typeof verdicts = [];
+    const verifiedFindingIds = new Set<string>();
+    for (const vulnerabilityClass of classes) {
+      const sourceCollectorPath = path.join(deliverablesPath, `${vulnerabilityClass}_exploit_collector.json`);
+      const renumberedCollectorPath = path.join(deliverablesPath, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
+      let sourceEntries: Array<Record<string, unknown> & { vulnerability_id?: string; status?: string }>;
+      try { sourceEntries = JSON.parse(await fs.readFile(sourceCollectorPath, 'utf8')) as Array<Record<string, unknown> & { vulnerability_id?: string; status?: string }>; }
+      catch { continue; }
+      for (const entry of sourceEntries) {
+        if (entry.status !== 'exploited' || !entry.vulnerability_id || byId.has(entry.vulnerability_id)) continue;
+        const unresolved = {
+          finding_id: entry.vulnerability_id,
+          status: 'manual_review' as const,
+          reason: 'No replay verdict was recorded.',
+          capture_ids: [],
+          frontend_status: 'unable_to_determine' as const,
+          frontend_url: null,
+          frontend_trigger: null,
+          frontend_reason: 'The record agent did not establish the frontend entry point.',
+        };
+        verdicts.push(unresolved);
+        byId.set(entry.vulnerability_id, unresolved);
+      }
+      for (const entry of sourceEntries) {
+        if (!entry.vulnerability_id) continue;
+        const verdict = byId.get(entry.vulnerability_id);
+        if (verdict?.status === 'verified') {
+          entry.http_evidence_ids = verdict.capture_ids;
+          entry.http_evidence_receipts = verdict.http_evidence_receipts ?? [];
+          entry.http_evidence_display = 'include';
+          entry.verification_method = 'http';
+          entry.http_evidence_reason = verdict.reason;
+        } else if (entry.status === 'exploited') {
+          entry.http_evidence_ids = [];
+          entry.http_evidence_receipts = [];
+          entry.http_evidence_display = 'omit';
+          entry.verification_method = 'other';
+          entry.http_evidence_reason = verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
+        }
+      }
+      await atomicWrite(sourceCollectorPath, `${JSON.stringify(sourceEntries, null, 2)}\n`);
+
+      let entries = sourceEntries;
+      let finalIdToSourceId = new Map<string, string>();
+      try {
+        entries = JSON.parse(await fs.readFile(renumberedCollectorPath, 'utf8')) as typeof sourceEntries;
+        const renumberMap = JSON.parse(await fs.readFile(path.join(deliverablesPath, `${vulnerabilityClass}_renumber_map.json`), 'utf8')) as { map?: Record<string, string> };
+        finalIdToSourceId = new Map(Object.entries(renumberMap.map ?? {}).map(([sourceId, finalId]) => [finalId, sourceId]));
+      } catch { /* no renumbered artifact for an empty or absent class */ }
+      for (const entry of entries) {
+        if (!entry.vulnerability_id) continue;
+        const sourceId = finalIdToSourceId.get(entry.vulnerability_id) ?? entry.vulnerability_id;
+        const verdict = byId.get(sourceId);
+        if (verdict?.status === 'verified') {
+          entry.http_evidence_ids = verdict.capture_ids;
+          entry.http_evidence_receipts = verdict.http_evidence_receipts ?? [];
+          entry.http_evidence_display = 'include';
+          entry.verification_method = 'http';
+          entry.http_evidence_reason = verdict.reason;
+        } else if (entry.status === 'exploited') {
+          entry.http_evidence_ids = [];
+          entry.http_evidence_receipts = [];
+          entry.http_evidence_display = 'omit';
+          entry.verification_method = 'other';
+          entry.http_evidence_reason = verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
+        }
+      }
+      if (entries !== sourceEntries) await atomicWrite(renumberedCollectorPath, `${JSON.stringify(entries, null, 2)}\n`);
+      const filtered = entries.filter((entry) =>
+        entry.status !== 'exploited' || (!!entry.vulnerability_id && byId.get(finalIdToSourceId.get(entry.vulnerability_id) ?? entry.vulnerability_id)?.status === 'verified'),
+      );
+      for (const entry of filtered) {
+        if (entry.status === 'exploited' && entry.vulnerability_id) verifiedFindingIds.add(entry.vulnerability_id);
+      }
+      const queuePath = path.join(deliverablesPath, `${vulnerabilityClass}_exploitation_queue.json`);
+      let idToType = new Map<string, string>();
+      try { idToType = (await readExploitQueue(queuePath)).idToType; } catch { /* render with stable IDs only */ }
+      let recordedMarkdown = renderExploitDeliverable(
+        vulnerabilityClass,
+        filtered as import('../collectors/exploit-collector.js').AddExploitInput[],
+        idToType,
+      );
+      const replayed = verdicts.filter((verdict) =>
+        filtered.some((entry) => (finalIdToSourceId.get(entry.vulnerability_id ?? '') ?? entry.vulnerability_id) === verdict.finding_id) && verdict.status === 'verified',
+      );
+      if (replayed.length) {
+        recordedMarkdown += `\n\n## Record-stage replay and frontend reproduction\n\n${replayed
+          .map((verdict) => {
+            const frontend = verdict.frontend_status === 'available'
+              ? `Frontend URL: ${verdict.frontend_url}\n\nFrontend trigger: ${verdict.frontend_trigger}`
+              : `Frontend status: ${verdict.frontend_status} — ${verdict.frontend_reason}`;
+            return `- ${verdict.finding_id}: packet captures ${verdict.capture_ids.join(', ')}; ${verdict.reason}\n\n  ${frontend}`;
+          })
+          .join('\n')}\n`;
+      }
+      await atomicWrite(
+        path.join(deliverablesPath, `${vulnerabilityClass}_recorded_exploitation_evidence.md`),
+        recordedMarkdown,
+      );
+      for (const entry of sourceEntries) {
+        if (entry.status !== 'exploited' || !entry.vulnerability_id) continue;
+        const verdict = byId.get(entry.vulnerability_id);
+        if (!verdict || verdict.status !== 'verified') {
+          pending.push(verdict ?? {
+            finding_id: entry.vulnerability_id,
+            status: 'manual_review' as const,
+            reason: 'No replay verdict was recorded.',
+            capture_ids: [],
+            frontend_status: 'unable_to_determine' as const,
+            frontend_url: null,
+            frontend_trigger: null,
+            frontend_reason: 'The record agent did not establish the frontend entry point.',
+          });
+        }
+      }
+    }
+    await atomicWrite(path.join(deliverablesPath, 'record_verification.json'), `${JSON.stringify(verdicts, null, 2)}\n`);
+    await atomicWrite(path.join(deliverablesPath, 'record_verified_finding_ids.json'), `${JSON.stringify([...verifiedFindingIds].sort(), null, 2)}\n`);
+    const lines = [
+      '# Record and Replay Results',
+      '',
+      ...verdicts.flatMap((v) => [
+        `- **${v.finding_id} — ${v.status}**: ${v.reason}`,
+        v.frontend_status === 'available'
+          ? `  Frontend: ${v.frontend_url} — ${v.frontend_trigger}`
+          : `  Frontend: ${v.frontend_status} — ${v.frontend_reason}`,
+      ]),
+    ];
+    await atomicWrite(path.join(deliverablesPath, 'record_verification.md'), `${lines.join('\n')}\n`);
+    const pendingLines = ['# Pending Manual Verification', '', 'The following exploitation findings could not be replay-verified and are omitted from the final report.', ''];
+    for (const item of pending) {
+      pendingLines.push(`- **${item.finding_id}**: ${item.reason}`);
+      pendingLines.push(item.frontend_status === 'available'
+        ? `  Frontend: ${item.frontend_url} — ${item.frontend_trigger}`
+        : `  Frontend: ${item.frontend_status} — ${item.frontend_reason}`);
+    }
+    if (!pending.length) pendingLines.push('No findings are pending manual verification.');
+    await atomicWrite(path.join(deliverablesPath, 'pending_manual_verification.md'), `${pendingLines.join('\n')}\n`);
+  };
+  return runAgentActivity('record', input, collector.tools, writeDeliverable);
 }
 
 export async function runReportAgent(input: ActivityInput, exploit: boolean): Promise<AgentMetrics> {
@@ -756,7 +906,20 @@ export async function runReportAgent(input: ActivityInput, exploit: boolean): Pr
     return { ...(await auditSession.getReportMetrics()), skipped: true };
   }
 
-  const collector = createFindingCollector(exploit);
+  let verifiedFindingIds: ReadonlySet<string> | undefined;
+  if (exploit) {
+    try {
+      const ids = JSON.parse(await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8')) as unknown;
+      if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new Error('invalid finding allowlist');
+      verifiedFindingIds = new Set(ids as string[]);
+    } catch {
+      throw ApplicationFailure.nonRetryable(
+        'Record-stage verification results are missing or invalid; the report cannot include unverified findings.',
+        'RecordVerificationError',
+      );
+    }
+  }
+  const collector = createFindingCollector(exploit, verifiedFindingIds);
   const evidenceContainer = getOrCreateContainer(
     input.workflowId,
     buildSessionMetadata(input),

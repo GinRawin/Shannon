@@ -1195,6 +1195,13 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     }
 
     if (state.reportProgress.stage === 'pending') {
+      if (exploit) {
+        state.currentAgent = 'record';
+        state.agentMetrics.record = await a.runRecordAgent(activityInput);
+        markCompleted('record');
+        if (input.checkpointsEnabled) await a.saveCheckpoint(activityInput, 'record', 'exploitation', state);
+        state.currentAgent = 'report';
+      }
       const assembled = await runOperation('report:assemble', 'Assemble report inputs', () =>
         deterministicReportActs.assembleReportActivity(activityInput, exploit),
       );

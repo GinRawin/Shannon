@@ -112,7 +112,13 @@ Exploit Agent 读取对应类别的 exploitation queue，对候选漏洞进行�
 
 主要输出示例：`.shannon/deliverables/injection_exploitation_evidence.md`
 
-## 7. Report：最终报告
+## 7. Record：重放验证与数据包登记
+
+Record Agent 在 Exploit Agent 完成后读取已发现漏洞及其利用命令，重放能够安全复现的 HTTP 请求，并保存真实请求/响应数据包。它还会检查是否存在对应的前端入口；找到时会记录页面 URL、按钮或输入框位置和触发步骤，无法确认时会明确标注。只有重放成功且响应再次证明影响的漏洞会进入最终报告；失败、无法安全重放或结果不确定的项目会写入 `.shannon/deliverables/pending_manual_verification.md`，等待人工复核。
+
+主要输出包括 `record_verification.json`、`pending_manual_verification.md` 和各类别的 `*_recorded_exploitation_evidence.md`。采集到的 HTTP 数据包保存在 `.shannon/deliverables/http-exchanges/`。
+
+## 8. Report：最终报告
 
 Report Agent 汇总经过验证的结果，生成面向用户的安全评估报告，通常包括：
 
@@ -146,6 +152,10 @@ recon_deliverable.md
 *_exploitation_queue.json
           ↓
 *_exploitation_evidence.md
+          ↓
+record_verification.json
+pending_manual_verification.md
+*_recorded_exploitation_evidence.md
           ↓
 Security-Assessment-Report.md / PDF
 ```
