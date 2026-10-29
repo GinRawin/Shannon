@@ -58,7 +58,7 @@ function parseJsonMatches(output: string, root: string, template: ExploreTemplat
 async function runRipgrep(root: string, pattern: string, onlyFile?: string): Promise<string> {
   return await new Promise((resolve, reject) => {
     const args = [
-      '--json', '--line-number', '--max-count', '8', '--max-columns', '1000', '--max-columns-preview', '--color', 'never',
+      '--json', '--line-number', '--max-columns', '1000', '--max-columns-preview', '--color', 'never',
       ...SOURCE_GLOBS.flatMap((glob) => ['--glob', glob]),
       '--glob', '!**/node_modules/**', '--glob', '!**/.git/**', '--glob', '!**/.shannon/**',
       '-e', pattern,
@@ -92,10 +92,11 @@ async function runRipgrep(root: string, pattern: string, onlyFile?: string): Pro
 export async function searchExploreTemplates(
   sourceDir: string,
   templates: readonly ExploreTemplate[],
-): Promise<{ matches: ExploreSearchMatch[]; rejected: Array<{ template: ExploreTemplate; reason: string }> }> {
+): Promise<{ matches: ExploreSearchMatch[]; rejected: Array<{ template: ExploreTemplate; reason: string }>; truncated: boolean }> {
   const root = await realpath(sourceDir);
   const matches: ExploreSearchMatch[] = [];
   const rejected: Array<{ template: ExploreTemplate; reason: string }> = [];
+  let truncated = false;
   for (const template of templates) {
     if (template.regex.length > 300 || template.regex.includes('\0')) {
       rejected.push({ template, reason: 'Template is too long or contains an invalid byte.' });
@@ -125,16 +126,20 @@ export async function searchExploreTemplates(
       rejected.push({ template, reason: error instanceof Error ? error.message : 'Search failed.' });
       continue;
     }
+    let templateCount = 0;
     for (const match of allMatches) {
       // The seed itself is provenance, not a newly discovered location.
       if (match.match_file === template.sink_file && match.match_line === template.sink_line) continue;
+      if (matches.length >= MAX_TOTAL_MATCHES || templateCount >= MAX_MATCHES_PER_TEMPLATE) {
+        truncated = true;
+        break;
+      }
       matches.push(match);
-      if (matches.length >= MAX_TOTAL_MATCHES) break;
-      if (matches.filter((entry) => entry.finding_id === template.finding_id && entry.regex === template.regex).length >= MAX_MATCHES_PER_TEMPLATE) break;
+      templateCount++;
     }
-    if (matches.length >= MAX_TOTAL_MATCHES) break;
+    if (matches.length >= MAX_TOTAL_MATCHES) { truncated = true; break; }
   }
   const unique = new Map<string, ExploreSearchMatch>();
   for (const match of matches) unique.set(`${match.finding_id}:${match.match_file}:${match.match_line}`, match);
-  return { matches: [...unique.values()], rejected };
+  return { matches: [...unique.values()], rejected, truncated };
 }

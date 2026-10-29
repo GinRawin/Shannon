@@ -16,6 +16,7 @@ import { AGENT_PHASE_MAP, type PhaseName } from '../session-manager.js';
 import { ErrorCode } from '../types/errors.js';
 import type { AgentEndResult, AgentName } from '../types/index.js';
 import type { AgentMetrics } from '../types/metrics.js';
+import type { PostExploitationProgress, PostExploitationStage } from '../types/post-exploitation.js';
 import {
   appendPartialReasons,
   createInitialDurableScanState,
@@ -358,6 +359,26 @@ export class MetricsTracker {
     data.durableScanState = initialized;
     await this.save();
     return structuredClone(initialized);
+  }
+
+  async savePostExploitationProgress(stage: PostExploitationStage, progress: PostExploitationProgress): Promise<PostExploitationProgress> {
+    const data = this.requireData();
+    const state = this.requireDurableScanState();
+    const existing = state.post_exploitation?.[stage];
+    if (existing?.status === 'completed') {
+      if (existing.token !== progress.token || (progress.status === 'completed' && existing.checkpoint !== progress.checkpoint))
+        throw new RunStateError('DurableStateConflictError', 'post-exploitation-checkpoint-conflict');
+      return structuredClone(existing);
+    }
+    // Claim once; concurrent attempts must use the persisted token.
+    if (existing && progress.status === 'running') return structuredClone(existing);
+    if (existing && existing.token !== progress.token)
+      throw new RunStateError('DurableStateConflictError', 'post-exploitation-token-conflict');
+    const next = { ...state, post_exploitation: { ...state.post_exploitation, [stage]: progress } };
+    if (!isDurableScanState(next)) throw new RunStateError('CorruptedSessionError', 'post-exploitation-progress-invalid');
+    data.durableScanState = next;
+    await this.save();
+    return structuredClone(progress);
   }
 
   /** Return validated durable state. */

@@ -11,6 +11,40 @@ function errorResult(message: string) {
   return { content: [{ type: 'text' as const, text: JSON.stringify({ status: 'error', message, retryable: true }, null, 2) }], details: undefined };
 }
 
+/** Accept a single explicit HTTP transfer; reject curl features that can add destinations. */
+export function validateRecordTarget(args: readonly string[], targetUrl: string): void {
+  const valueOptions = new Set(['--url', '--request', '--header', '--data', '--data-raw', '--data-binary', '--data-urlencode', '--json', '--form', '--form-string', '--cookie', '--cookie-jar', '--user', '--user-agent', '--referer', '--max-time', '--connect-timeout', '--output', '--dump-header', '--write-out']);
+  const flagOptions = new Set(['--silent', '--show-error', '--insecure', '--include', '--head', '--compressed', '--fail', '--fail-with-body', '--globoff']);
+  const shortValues = new Set(['-X', '-H', '-d', '-F', '-b', '-c', '-u', '-A', '-e', '-o', '-D', '-w']);
+  const shortFlags = new Set(['-s', '-S', '-k', '-i', '-I', '-f', '-g']);
+  const urls: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg.startsWith('--')) {
+      const index = arg.indexOf('=');
+      const name = index < 0 ? arg : arg.slice(0, index);
+      if (flagOptions.has(name) && index < 0) continue;
+      if (!valueOptions.has(name)) throw new Error(`Unsupported curl option for record replay: ${name}`);
+      const value = index < 0 ? args[++i] : arg.slice(index + 1);
+      if (value === undefined || !value.length) throw new Error(`Missing value for ${name}`);
+      if (name === '--url') urls.push(value);
+    } else if (arg.startsWith('-')) {
+      if (shortFlags.has(arg)) continue;
+      const option = arg.slice(0, 2);
+      if (!shortValues.has(option)) throw new Error(`Unsupported curl option for record replay: ${arg}`);
+      const value = arg.length > 2 ? arg.slice(2) : args[++i];
+      if (value === undefined || !value.length) throw new Error(`Missing value for ${option}`);
+    } else {
+      urls.push(arg);
+    }
+  }
+  if (urls.length !== 1 || /[{}\[\]]/.test(urls[0]!)) throw new Error('Replay must contain exactly one URL without curl URL globbing.');
+  let url: URL;
+  try { url = new URL(urls[0]!); } catch { throw new Error('Replay URL is invalid.'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.origin !== new URL(targetUrl).origin)
+    throw new Error('Replay URL must use the configured assessment target origin.');
+}
+
 export interface RecordVerdict {
   finding_id: string;
   status: 'verified' | 'manual_review';
@@ -44,16 +78,10 @@ export function createRecordCollector(options: {
       }),
       async execute(_id, input, signal) {
         if (!options.validIds.has(input.finding_id)) return errorResult('Finding is not present in the exploitation queues.');
-        const targetOrigin = new URL(options.targetUrl).origin;
-        const explicitUrl = input.curl_arguments.find((arg) => /^https?:\/\//i.test(arg));
-        const inlineUrl = input.curl_arguments.find((arg) => /^--url=https?:\/\//i.test(arg))?.slice('--url='.length);
-        const urlIndex = input.curl_arguments.findIndex((arg) => arg === '--url');
-        const requestUrl = explicitUrl ?? inlineUrl ?? (urlIndex >= 0 ? input.curl_arguments[urlIndex + 1] : undefined);
-        if (!requestUrl) return errorResult('Pass the target URL explicitly in the curl arguments.');
         try {
-          if (new URL(requestUrl).origin !== targetOrigin) return errorResult('Replay URL must use the configured assessment target origin.');
-        } catch {
-          return errorResult('Replay URL is invalid.');
+          validateRecordTarget(input.curl_arguments, options.targetUrl);
+        } catch (error) {
+          return errorResult(error instanceof Error ? error.message : 'Replay URL is invalid.');
         }
         try {
           const result = await captureHttpRequest({

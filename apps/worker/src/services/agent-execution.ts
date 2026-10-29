@@ -71,10 +71,14 @@ export interface AgentExecutionInput {
   successDisposition?: 'terminal' | 'report-draft';
   /** Trusted workflow guidance appended for a bounded targeted re-analysis pass. */
   promptAddendum?: string | undefined;
+  auditAgentName?: import('../audit/safe-fields.js').LoggableAgentName;
+  additionalGitPaths?: readonly string[];
   cancellationSignal?: AbortSignal | undefined;
 }
 
 interface FailAgentOpts {
+  auditAgentName?: import('../audit/safe-fields.js').LoggableAgentName;
+  gitPaths?: readonly string[];
   attemptNumber: number;
   result: PiPromptResult;
   rollbackReason: string;
@@ -175,7 +179,8 @@ export class AgentExecutionService {
       promptAddendum,
       cancellationSignal,
     } = input;
-    const gitPaths = getAgentGitPaths(agentName);
+    const gitPaths = [...getAgentGitPaths(agentName), ...(input.additionalGitPaths ?? [])];
+    const auditAgentName = input.auditAgentName ?? agentName;
 
     // The parameter type only constrains element type, not that this is exactly the fixed five
     // classes in order; this runtime check catches a caller that bypasses the workflow's contract.
@@ -256,7 +261,7 @@ export class AgentExecutionService {
     }
 
     // 4. Start audit logging
-    await auditSession.startAgent(agentName, attemptNumber);
+    await auditSession.startAgent(auditAgentName, attemptNumber);
 
     // startAgent opens this agent's per-agent log lease. Run the rest under try/finally so an
     // unexpected throw between here and the agent's end still releases that lease.
@@ -285,6 +290,8 @@ export class AgentExecutionService {
         return this.failAgent(agentName, deliverablesPath, auditSession, logger, {
           attemptNumber,
           result,
+          auditAgentName,
+          gitPaths,
           rollbackReason: 'execution failure',
           errorMessage: result.error || 'Agent execution failed',
           errorCode,
@@ -368,6 +375,8 @@ export class AgentExecutionService {
         return this.failAgent(agentName, deliverablesPath, auditSession, logger, {
           attemptNumber,
           result,
+          auditAgentName,
+          gitPaths,
           rollbackReason,
           errorMessage: finalizationError.message,
           errorCode: finalizationError.code ?? ErrorCode.AGENT_EXECUTION_FAILED,
@@ -393,14 +402,14 @@ export class AgentExecutionService {
       if (successDisposition === 'report-draft') {
         await auditSession.endReportDraft(endResult);
       } else {
-        await auditSession.endAgent(agentName, endResult);
+        await auditSession.endAgent(auditAgentName, endResult);
       }
 
       return ok(endResult);
     } finally {
       // Normal completion already released this agent's log lease (endAgent → close()); this is the
       // backstop for an unexpected throw between start and end. Idempotent and best-effort.
-      await auditSession.releaseAgentLog(agentName);
+      await auditSession.releaseAgentLog(auditAgentName);
     }
   }
 
@@ -415,7 +424,7 @@ export class AgentExecutionService {
       deliverablesPath,
       opts.rollbackReason,
       logger,
-      getAgentGitPaths(agentName),
+      opts.gitPaths ?? getAgentGitPaths(agentName),
     );
 
     const safeError = safeErrorFromCode(opts.errorCode, opts.category);
@@ -433,7 +442,7 @@ export class AgentExecutionService {
       error: safeError.message,
       errorCode: safeError.code,
     };
-    await auditSession.endAgent(agentName, endResult);
+    await auditSession.endAgent(opts.auditAgentName ?? agentName, endResult);
 
     const context = rollbackResult.success
       ? opts.context

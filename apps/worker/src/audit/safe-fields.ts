@@ -6,11 +6,12 @@
 
 import { ALL_AGENTS } from '../types/agents.js';
 import { ErrorCode, type PentestErrorType } from '../types/errors.js';
+import { POST_EXPLOITATION_STAGES } from '../types/post-exploitation.js';
 
 export const WORKFLOW_PHASES = ['pre-recon', 'recon', 'vulnerability-exploitation', 'reporting'] as const;
 export type WorkflowPhase = (typeof WORKFLOW_PHASES)[number];
 
-export const LOGGABLE_AGENT_NAMES = [...ALL_AGENTS, 'validate-authentication'] as const;
+export const LOGGABLE_AGENT_NAMES = [...ALL_AGENTS, ...POST_EXPLOITATION_STAGES, 'validate-authentication'] as const;
 export type LoggableAgentName = (typeof LOGGABLE_AGENT_NAMES)[number];
 
 /** A log-safe error rendering: a known code paired with one of the fixed, generic messages below. */

@@ -31,6 +31,7 @@ import {
   ASSEMBLED_REPORT_PDF_FILENAME,
   DEFAULT_DELIVERABLES_SUBDIR,
   deliverablesDir,
+  PROMPTS_DIR,
   REPORT_FINALIZATION_MANIFEST_FILENAME,
   REPORT_JSON_FILENAME,
   resolveSessionJsonPath,
@@ -40,7 +41,7 @@ import { getAgentGitPaths } from '../services/agent-git-paths.js';
 import { compactReportFindings as compactReportFindingsService } from '../services/compaction-core.js';
 import { getContainer, getOrCreateContainer, removeContainer } from '../services/container.js';
 import { classifyErrorForTemporal, PentestError } from '../services/error-handling.js';
-import { RenumberError } from '../services/exact-output-commit.js';
+import { RenumberError, writeAndCommitExactFiles } from '../services/exact-output-commit.js';
 import { ExploitationCheckerService } from '../services/exploitation-checker.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
 import { executeGitCommandWithRetry } from '../services/git-manager.js';
@@ -552,14 +553,24 @@ async function runVulnAgentWithCollector(
   }> = [];
   let originalQueueContents: string | undefined;
   let originalAnalysisContents: string | undefined;
+  let priorQueueDocument: { vulnerabilities?: Array<Record<string, unknown> & { ID?: string }> } = {};
   if (input.exploreExpansion) {
-    if (await fileExists(expansionPath)) return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
     const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+    const clearStaleExpansion = async (): Promise<void> => {
+      await writeAndCommitExactFiles(dir, [
+        { relPath: `explore_expansion_${vulnClass}.json`, contents: null },
+        { relPath: `explore_expansion_${vulnClass}.md`, contents: null },
+        { relPath: `explore_candidates_${vulnClass}.json`, contents: null },
+      ], `Clear stale ${vulnClass} exploration`, createActivityLogger());
+    };
     const results = JSON.parse(await fs.readFile(path.join(dir, 'explore_search_results.json'), 'utf8')) as {
       matches?: Array<{ finding_id: string; vulnerability_class: string; match_file: string; match_line: number; excerpt: string; regex: string }>;
     };
     const classMatches = (results.matches ?? []).filter((match) => match.vulnerability_class === vulnClass);
-    if (!classMatches.length) return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
+    if (!classMatches.length) {
+      await clearStaleExpansion();
+      return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
+    }
     const [manifestRaw, exploitCollectorRaw, priorQueue, priorAnalysis] = await Promise.all([
       fs.readFile(path.join(dir, `${vulnClass}_reconciliation_manifest.json`), 'utf8'),
       fs.readFile(path.join(dir, `${vulnClass}_exploit_collector_renumbered.json`), 'utf8'),
@@ -569,6 +580,7 @@ async function runVulnAgentWithCollector(
     originalQueueContents = priorQueue;
     originalAnalysisContents = priorAnalysis;
     const manifest = JSON.parse(manifestRaw) as { lineage?: Record<string, { primary?: string; absorbed?: string[] }> };
+    priorQueueDocument = JSON.parse(priorQueue) as { vulnerabilities?: Array<Record<string, unknown> & { ID?: string }> };
     const exploitEntries = JSON.parse(exploitCollectorRaw) as Array<Record<string, unknown> & { vulnerability_id?: string }>;
     const entryById = new Map(exploitEntries.map((entry) => [entry.vulnerability_id, entry]));
     const grouped = new Map<string, typeof classMatches>();
@@ -588,7 +600,10 @@ async function runVulnAgentWithCollector(
       const producerId = `${producerPrefix[vulnClass]}-VULN-${String(nextExpansionId++).padStart(2, '0')}`;
       return [{ finding_id: findingId, producer_id: producerId, vulnerability, matches }];
     });
-    if (!expansionTargets.length) return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
+    if (!expansionTargets.length) {
+      await clearStaleExpansion();
+      return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
+    }
   }
 
   const collector = createVulnCollector(vulnClass);
@@ -612,6 +627,17 @@ async function runVulnAgentWithCollector(
         if (Array.isArray(parsed.vulnerabilities)) submitted = parsed.vulnerabilities.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object');
       } catch { /* an absent submission yields no expansion assessments */ }
       const targetsByProducer = new Map(expansionTargets.map((target) => [target.producer_id, target]));
+      const independentProducers = submitted.filter((entry) =>
+        typeof entry.ID === 'string' && !targetsByProducer.has(entry.ID),
+      );
+      const usedTaskIds = new Set((priorQueueDocument.vulnerabilities ?? []).map((entry) => entry.ID).filter((id): id is string => typeof id === 'string'));
+      const idPrefix: Record<typeof vulnClass, string> = { injection: 'INJ', xss: 'XSS', auth: 'AUTH', ssrf: 'SSRF', authz: 'AUTHZ' };
+      const idPattern = new RegExp(`^${idPrefix[vulnClass]}-(\\d+)$`);
+      let nextTaskId = [...usedTaskIds].reduce((max, id) => Math.max(max, Number(idPattern.exec(id)?.[1] ?? 0)), 0) + 1;
+      const independentCandidates: Array<Record<string, unknown> & { ID: string }> = independentProducers.map((entry) => {
+        const { ID: _producerId, ...candidate } = entry;
+        return { ...candidate, ID: `${idPrefix[vulnClass]}-${String(nextTaskId++).padStart(2, '0')}` };
+      });
       const assessments = submitted.flatMap((entry) => {
         const target = typeof entry.ID === 'string' ? targetsByProducer.get(entry.ID) : undefined;
         if (!target) return [];
@@ -631,8 +657,12 @@ async function runVulnAgentWithCollector(
           confirmed_code_locations: locations,
         }];
       });
-      await atomicWrite(expansionPath, `${JSON.stringify({ vulnerability_class: vulnClass, assessments }, null, 2)}\n`);
-      const expansionLines = [`# Template-based expansion review: ${vulnClass}`, '', 'These locations were assessed as additional code locations for an already record-verified finding. They are not separate vulnerability IDs and did not receive a second exploit or record run.', ''];
+      const inputDigest = createHash('sha256').update(JSON.stringify(expansionTargets)).digest('hex');
+      const candidateQueuePath = path.join(deliverablesPath, `explore_candidates_${vulnClass}.json`);
+      await atomicWrite(candidateQueuePath, `${JSON.stringify({ vulnerabilities: independentCandidates }, null, 2)}\n`);
+      await atomicWrite(expansionPath, `${JSON.stringify({ vulnerability_class: vulnClass, input_digest: inputDigest, assessments, independent_candidates: independentCandidates }, null, 2)}\n`);
+      const expansionLines = [`# Template-based expansion review: ${vulnClass}`, '', 'The following independent candidates are included in the final report only when their separate exploitation proof passes the second record replay. Related locations under an existing finding ID only enrich that finding.', '', '## Independently confirmed additional findings', ''];
+      for (const candidate of independentCandidates) expansionLines.push(`- Independent candidate ${String(candidate.ID)}: ${String(candidate.title ?? candidate.vulnerability_type ?? 'Untitled')}`);
       for (const item of assessments) {
         expansionLines.push(`## ${item.finding_id}: ${item.title ?? 'Related code location'}`, '');
         for (const location of item.confirmed_code_locations as Array<{ file?: string; start_line?: number; end_line?: number }>)
@@ -649,15 +679,19 @@ async function runVulnAgentWithCollector(
   };
   let promptAddendum: string | undefined;
   if (input.exploreExpansion) {
-    promptAddendum = [
-      '<explore_expansion_pass>',
-      'This is one bounded source-expansion pass after exploitation and record verification. Read the supplied exploration search results and source code at each matching file and line. The entries below are already record-verified vulnerability templates. Decide only whether each matched source location is another instance of that same finding.',
-      'Do not create a new vulnerability. The producer IDs shown below are temporary correlation tokens for this expansion review, not new finding IDs. If the match is the same flaw, submit one queue entry using the exact supplied token and include code_locations only for the matching files you confirmed. If it is not the same flaw, omit that token. This pass will not run exploit or record again.',
-      JSON.stringify({ targets: expansionTargets }, null, 2),
-      '</explore_expansion_pass>',
-    ].join('\n');
+    const promptRoot = input.promptDir ? path.resolve(process.env.SHANNON_WORKER_ROOT ?? process.cwd(), input.promptDir) : PROMPTS_DIR;
+    const instructions = await fs.readFile(path.join(promptRoot, 'explore-expansion.txt'), 'utf8');
+    promptAddendum = `${instructions}\n\n${JSON.stringify({ targets: expansionTargets }, null, 2)}\n</explore_expansion_pass>`;
   }
-  return runAgentActivity(agentName, input, collector.tools, writeDeliverable, 'terminal', !input.exploreExpansion, promptAddendum);
+  try {
+    return await runAgentActivity(agentName, input, collector.tools, writeDeliverable, 'terminal', !input.exploreExpansion, promptAddendum);
+  } finally {
+    if (input.exploreExpansion) {
+      const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+      if (originalQueueContents !== undefined) await atomicWrite(path.join(dir, `${vulnClass}_exploitation_queue.json`), originalQueueContents);
+      if (originalAnalysisContents !== undefined) await atomicWrite(path.join(dir, `${vulnClass}_analysis_deliverable.md`), originalAnalysisContents);
+    }
+  }
 }
 
 export async function runInjectionVulnAgent(input: ActivityInput): Promise<AgentMetrics> {
@@ -752,6 +786,20 @@ async function runExploitAgentWithCollector(
 
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   const queuePath = path.join(dir, `${vulnClass}_exploitation_queue.json`);
+  const expansion = input.exploreExpansion === true;
+  const candidateQueuePath = path.join(dir, `explore_candidates_${vulnClass}.json`);
+  let originalQueue: string | undefined;
+  if (expansion) {
+    let candidateCount = 0;
+    try {
+      const parsed = JSON.parse(await fs.readFile(candidateQueuePath, 'utf8')) as { vulnerabilities?: unknown };
+      candidateCount = Array.isArray(parsed.vulnerabilities) ? parsed.vulnerabilities.length : 0;
+    } catch { /* no discovered candidates for this class */ }
+    if (candidateCount === 0) return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
+    originalQueue = await fs.readFile(queuePath, 'utf8');
+    const candidates = await fs.readFile(candidateQueuePath, 'utf8');
+    await atomicWrite(queuePath, candidates);
+  }
   const { validIds, idToType } = await readExploitQueue(queuePath);
 
   const collector = createExploitCollector({ vulnClass, validIds });
@@ -771,17 +819,29 @@ async function runExploitAgentWithCollector(
       missing: missingIds.length,
     });
 
-    const collectorRelPath = sparseExploitCollectorPath(vulnClass);
+    const collectorRelPath = expansion ? `explore_expansion_${vulnClass}_exploit_collector.json` : sparseExploitCollectorPath(vulnClass);
     await atomicWrite(path.join(deliverablesPath, collectorRelPath), `${JSON.stringify(collected, null, 2)}\n`);
     logger.info(`Wrote ${collectorRelPath} with ${collected.length} collector entries`);
 
     const markdown = renderExploitDeliverable(vulnClass, collected, idToType);
-    const mdPath = path.join(deliverablesPath, `${vulnClass}_exploitation_evidence.md`);
+    const mdPath = path.join(deliverablesPath, expansion ? `explore_expansion_${vulnClass}_exploitation_evidence.md` : `${vulnClass}_exploitation_evidence.md`);
     await atomicWrite(mdPath, markdown);
-    logger.info(`Wrote ${vulnClass}_exploitation_evidence.md from structured data (${markdown.length} bytes)`);
+    logger.info(`Wrote ${expansion ? `explore_expansion_${vulnClass}_exploitation_evidence.md` : `${vulnClass}_exploitation_evidence.md`} from structured data (${markdown.length} bytes)`);
+    if (expansion) {
+      const expansionReportPath = path.join(deliverablesPath, `explore_expansion_${vulnClass}.md`);
+      const prior = await fs.readFile(expansionReportPath, 'utf8').catch(() => `# Template-based expansion review: ${vulnClass}\n`);
+      await atomicWrite(expansionReportPath, `${prior}\n## Exploitation of additional findings\n\n${markdown}\n`);
+    }
+    if (originalQueue !== undefined) await atomicWrite(queuePath, originalQueue);
   };
-
-  return runAgentActivity(agentName, input, collector.tools, writeDeliverable);
+  try {
+    const extra = expansion
+      ? `\n\n<template_expansion_exploitation>These are newly analyzed findings discovered from source matches of confirmed vulnerability templates. Exploit only entries in the current queue, independently verify impact against the configured target, and record proof using the standard exploit tool. Do not modify the original findings. </template_expansion_exploitation>`
+      : undefined;
+    return await runAgentActivity(agentName, input, collector.tools, writeDeliverable, 'terminal', !expansion, extra);
+  } finally {
+    if (originalQueue !== undefined) await atomicWrite(queuePath, originalQueue);
+  }
 }
 
 export async function runInjectionExploitAgent(input: ActivityInput): Promise<AgentMetrics> {
@@ -816,7 +876,9 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   const validIds = new Set<string>();
   for (const vulnerabilityClass of classes) {
-    const queueFile = path.join(dir, `${vulnerabilityClass}_exploitation_queue.json`);
+    const queueFile = path.join(dir, input.exploreExpansion
+      ? `explore_candidates_${vulnerabilityClass}.json`
+      : `${vulnerabilityClass}_exploitation_queue.json`);
     try {
       const queue = JSON.parse(await fs.readFile(queueFile, 'utf8')) as { vulnerabilities?: Array<{ ID?: unknown }> };
       for (const vulnerability of queue.vulnerabilities ?? [])
@@ -850,8 +912,12 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
     const pending: typeof verdicts = [];
     const verifiedFindingIds = new Set<string>();
     for (const vulnerabilityClass of classes) {
-      const sourceCollectorPath = path.join(deliverablesPath, `${vulnerabilityClass}_exploit_collector.json`);
-      const renumberedCollectorPath = path.join(deliverablesPath, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
+      const sourceCollectorPath = path.join(deliverablesPath, input.exploreExpansion
+        ? `explore_expansion_${vulnerabilityClass}_exploit_collector.json`
+        : `${vulnerabilityClass}_exploit_collector.json`);
+      const renumberedCollectorPath = input.exploreExpansion
+        ? sourceCollectorPath
+        : path.join(deliverablesPath, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
       let sourceEntries: Array<Record<string, unknown> & { vulnerability_id?: string; status?: string }>;
       try { sourceEntries = JSON.parse(await fs.readFile(sourceCollectorPath, 'utf8')) as Array<Record<string, unknown> & { vulnerability_id?: string; status?: string }>; }
       catch { continue; }
@@ -919,9 +985,14 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         entry.status !== 'exploited' || (!!entry.vulnerability_id && byId.get(finalIdToSourceId.get(entry.vulnerability_id) ?? entry.vulnerability_id)?.status === 'verified'),
       );
       for (const entry of filtered) {
-        if (entry.status === 'exploited' && entry.vulnerability_id) verifiedFindingIds.add(entry.vulnerability_id);
+        // A blocked exploit is still a source-confirmed finding. Replay gates only findings
+        // whose exploit agent claimed a successful, replayable proof.
+        if ((entry.status === 'blocked' || entry.status === 'exploited') && entry.vulnerability_id)
+          verifiedFindingIds.add(entry.vulnerability_id);
       }
-      const queuePath = path.join(deliverablesPath, `${vulnerabilityClass}_exploitation_queue.json`);
+      const queuePath = path.join(deliverablesPath, input.exploreExpansion
+        ? `explore_candidates_${vulnerabilityClass}.json`
+        : `${vulnerabilityClass}_exploitation_queue.json`);
       let idToType = new Map<string, string>();
       try { idToType = (await readExploitQueue(queuePath)).idToType; } catch { /* render with stable IDs only */ }
       let recordedMarkdown = renderExploitDeliverable(
@@ -943,9 +1014,16 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           .join('\n')}\n`;
       }
       await atomicWrite(
-        path.join(deliverablesPath, `${vulnerabilityClass}_recorded_exploitation_evidence.md`),
+        path.join(deliverablesPath, input.exploreExpansion
+          ? `explore_expansion_${vulnerabilityClass}_recorded_exploitation_evidence.md`
+          : `${vulnerabilityClass}_recorded_exploitation_evidence.md`),
         recordedMarkdown,
       );
+      if (input.exploreExpansion && filtered.length) {
+        const expansionReportPath = path.join(deliverablesPath, `explore_expansion_${vulnerabilityClass}.md`);
+        const previous = await fs.readFile(expansionReportPath, 'utf8').catch(() => '');
+        await atomicWrite(expansionReportPath, `${previous}\n## Replay verification of additional findings\n\n${recordedMarkdown}\n`);
+      }
       for (const entry of sourceEntries) {
         if (entry.status !== 'exploited' || !entry.vulnerability_id) continue;
         const verdict = byId.get(entry.vulnerability_id);
@@ -963,12 +1041,20 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         }
       }
     }
-    await atomicWrite(path.join(deliverablesPath, 'record_verification.json'), `${JSON.stringify(verdicts, null, 2)}\n`);
-    await atomicWrite(path.join(deliverablesPath, 'record_verified_finding_ids.json'), `${JSON.stringify([...verifiedFindingIds].sort(), null, 2)}\n`);
+    let allVerdicts = verdicts;
+    let allVerifiedFindingIds = verifiedFindingIds;
+    if (input.exploreExpansion) {
+      const previousVerdicts = JSON.parse(await fs.readFile(path.join(deliverablesPath, 'record_verification.json'), 'utf8')) as typeof verdicts;
+      const previousIds = JSON.parse(await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8')) as string[];
+      allVerdicts = [...previousVerdicts, ...verdicts];
+      allVerifiedFindingIds = new Set([...previousIds, ...verifiedFindingIds]);
+    }
+    await atomicWrite(path.join(deliverablesPath, 'record_verification.json'), `${JSON.stringify(allVerdicts, null, 2)}\n`);
+    await atomicWrite(path.join(deliverablesPath, 'record_verified_finding_ids.json'), `${JSON.stringify([...allVerifiedFindingIds].sort(), null, 2)}\n`);
     const lines = [
       '# Record and Replay Results',
       '',
-      ...verdicts.flatMap((v) => [
+      ...allVerdicts.flatMap((v) => [
         `- **${v.finding_id} — ${v.status}**: ${v.reason}`,
         v.frontend_status === 'available'
           ? `  Frontend: ${v.frontend_url} — ${v.frontend_trigger}`
@@ -984,9 +1070,16 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         : `  Frontend: ${item.frontend_status} — ${item.frontend_reason}`);
     }
     if (!pending.length) pendingLines.push('No findings are pending manual verification.');
+    if (input.exploreExpansion) {
+      const originalPending = await fs.readFile(path.join(deliverablesPath, 'pending_manual_verification.md'), 'utf8').catch(() => '');
+      if (originalPending) pendingLines.splice(0, 3, originalPending.trimEnd(), '', '## Expansion findings pending replay');
+    }
     await atomicWrite(path.join(deliverablesPath, 'pending_manual_verification.md'), `${pendingLines.join('\n')}\n`);
   };
-  return runAgentActivity('record', input, collector.tools, writeDeliverable);
+  const expansionInstructions = input.exploreExpansion
+    ? '\n\n<template_expansion_record_pass>Replay only findings in explore_expansion_*_exploit_collector.json using their documented proof. Use explore_candidates_*.json for valid IDs. Record every expanded exploited finding; do not replay findings from the original exploitation collector.</template_expansion_record_pass>'
+    : undefined;
+  return runAgentActivity('record', input, collector.tools, writeDeliverable, 'terminal', true, expansionInstructions);
 }
 
 /** Extract sink templates with an agent, then search the assessed source tree with deterministic ripgrep. */
@@ -996,7 +1089,7 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
   const classes: ReconciliationClass[] = ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous'];
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   const verifiedIdsRaw = JSON.parse(await fs.readFile(path.join(dir, 'record_verified_finding_ids.json'), 'utf8')) as unknown;
-  if (!Array.isArray(verifiedIdsRaw) || verifiedIdsRaw.some((id) => typeof id !== 'string))
+  if (!Array.isArray(verifiedIdsRaw) || verifiedIdsRaw.some((id) => typeof id !== 'string'))
     throw ApplicationFailure.nonRetryable('Record verification IDs are invalid; Explore cannot establish trusted sinks.', 'RecordVerificationError');
   const verifiedIds = new Set(verifiedIdsRaw as string[]);
   const sinks = new Map<string, { vulnerabilityClass: string; locations: Map<string, Set<number>> }>();
@@ -1029,6 +1122,7 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
     lines.push('', '## Matching Source Locations', '');
     for (const match of search.matches) lines.push(`- ${match.finding_id}: ${match.match_file}:${match.match_line} — \`${match.excerpt.replace(/`/g, '\\`')}\``);
     if (!search.matches.length) lines.push('No additional source locations matched the submitted templates.');
+    if (search.truncated) lines.push('', 'Search results were truncated; additional matches may exist.');
     if (search.rejected.length) {
       lines.push('', '## Rejected Templates', '');
       for (const item of search.rejected) lines.push(`- ${item.template.finding_id}: ${item.reason}`);

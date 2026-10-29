@@ -8,6 +8,7 @@
 
 import type { AgenticSastReduction, CapellaFailurePoint } from '../ai/sast/types.js';
 import type { AgentName } from './agents.js';
+import { isPostExploitationProgress, type PostExploitationProgress, type PostExploitationStage } from './post-exploitation.js';
 import { ALL_VULN_CLASSES, type VulnClass } from './config.js';
 import type { ReconciliationClass } from './reconciliation.js';
 
@@ -836,6 +837,7 @@ export interface DurableScanState {
   readonly expected_agents: readonly AgentName[];
   readonly miscellaneous_outcome?: MiscellaneousOutcome;
   readonly report?: ReportProgress;
+  readonly post_exploitation?: Partial<Record<PostExploitationStage, PostExploitationProgress>>;
 }
 
 export type RunStateFailureType = 'IncompatibleWorkspaceError' | 'CorruptedSessionError' | 'DurableStateConflictError';
@@ -1029,7 +1031,7 @@ export function isDurableScanState(value: unknown): value is DurableScanState {
     !hasExactKeys(
       value,
       ['schema_version', 'exploit', 'participating_classes', 'expected_agents'],
-      ['miscellaneous_outcome', 'report'],
+      ['miscellaneous_outcome', 'report', 'post_exploitation'],
     ) ||
     value.schema_version !== DURABLE_SCAN_STATE_SCHEMA_VERSION ||
     typeof value.exploit !== 'boolean' ||
@@ -1064,6 +1066,7 @@ export function isDurableScanState(value: unknown): value is DurableScanState {
   if (outcome === 'exploitation_disabled' && value.exploit) return false;
   if (hasMiscellaneousAgent && outcome !== 'expected' && outcome !== 'completed') return false;
 
+  if (value.post_exploitation !== undefined && (!value.exploit || !isPostExploitationProgress(value.post_exploitation))) return false;
   return value.report === undefined || isReportProgress(value.report, value.participating_classes);
 }
 

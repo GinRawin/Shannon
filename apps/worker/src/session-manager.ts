@@ -248,6 +248,10 @@ export const AGENT_VALIDATORS: Record<AgentName, AgentValidator> = Object.freeze
   'authz-exploit': createExploitValidator('authz'),
   'miscellaneous-exploit': createExploitValidator('miscellaneous'),
 
+  // Structured output is validated by each collector and rendered after execution.
+  record: async (): Promise<boolean> => true,
+  explore: async (): Promise<boolean> => true,
+
   // Executive report agent
   report: async (sourceDir: string, logger: ActivityLogger): Promise<boolean> => {
     const reportFile = path.join(sourceDir, 'comprehensive_security_assessment_report.md');

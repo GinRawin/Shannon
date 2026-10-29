@@ -59,6 +59,13 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
         `${vulnerabilityClass}_exploit_collector.json`,
         `${vulnerabilityClass}_exploit_collector_renumbered.json`,
       );
+      paths.push(
+        `explore_candidates_${vulnerabilityClass}.json`,
+        `explore_expansion_${vulnerabilityClass}.md`,
+        `explore_expansion_${vulnerabilityClass}_exploit_collector.json`,
+        `explore_expansion_${vulnerabilityClass}_exploitation_evidence.md`,
+        `explore_expansion_${vulnerabilityClass}_recorded_exploitation_evidence.md`,
+      );
     }
   }
   if (agentName === 'explore') {
@@ -75,7 +82,25 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
   if (expansionArtifact) {
     paths.push(expansionArtifact);
     const vulnerabilityClass = agentName.replace(/-vuln$/, '');
-    paths.push(`explore_expansion_${vulnerabilityClass}.md`);
+    paths.push(
+      `explore_expansion_${vulnerabilityClass}.md`,
+      `explore_candidates_${vulnerabilityClass}.json`,
+    );
+  }
+  const exploitExpansionClass: Readonly<Partial<Record<AgentName, string>>> = {
+    'injection-exploit': 'injection',
+    'xss-exploit': 'xss',
+    'auth-exploit': 'auth',
+    'ssrf-exploit': 'ssrf',
+    'authz-exploit': 'authz',
+  };
+  const expansionClass = exploitExpansionClass[agentName];
+  if (expansionClass) {
+    paths.push(
+      `explore_expansion_${expansionClass}.md`,
+      `explore_expansion_${expansionClass}_exploit_collector.json`,
+      `explore_expansion_${expansionClass}_exploitation_evidence.md`,
+    );
   }
   return [...new Set(paths)];
 }

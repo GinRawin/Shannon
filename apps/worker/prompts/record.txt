@@ -24,4 +24,5 @@ Stay within the configured assessment target and the engagement rules. Reuse onl
 
 <tools>
 `capture_http_request` runs one request and persists its real HTTP exchange. `record_verification` saves the replay verdict and frontend reproduction details; verified verdicts require capture IDs created by this agent for the same finding.
+Replay accepts exactly one URL on the configured target origin. Redirects, curl config files, URL globbing and additional transfers are not supported. If the documented proof needs them, mark it for manual review rather than changing its meaning.
 </tools>

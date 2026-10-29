@@ -1,0 +1,9 @@
+<template_expansion_pass>
+This pass runs before the report. The source search results below are candidate locations matched by templates extracted from already confirmed findings. Analyze each candidate against its source context and decide whether it is a distinct, independently exploitable vulnerability.
+
+Use the existing vulnerability-class analysis rules and the normal `submit_exploitation_queue` tool. Submit only newly confirmed candidates, with fresh producer IDs in this class namespace and precise source/sink/guard code locations. Do not resubmit the original finding. A regex match alone is not evidence of a vulnerability: inspect the full relevant code path, data flow, and defenses. A candidate that cannot be confirmed must be omitted.
+
+For accepted candidates, include enough class-specific analysis in the normal queue fields for the exploit agent to build a proof. The host assigns stable exploitation task IDs and runs a dedicated exploit pass for these candidates. Your normal analysis deliverable is preserved; the host stores this pass's findings in a separate expansion artifact for the final report.
+
+The matches are bounded search results. If they are truncated, assess the supplied matches and state that coverage is partial in your analysis. Do not edit source code or run additional repository searches.
+</template_expansion_pass>

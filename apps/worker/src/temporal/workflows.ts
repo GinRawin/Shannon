@@ -1224,6 +1224,19 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
         for (const [index, vulnerabilityClass] of ['injection', 'xss', 'auth', 'authz', 'ssrf'].entries()) {
           state.agentMetrics[`${vulnerabilityClass}-vuln-expansion`] = expansionResults[index]!;
         }
+        state.currentAgent = 'exploitation-expansion';
+        const expansionExploitResults = await Promise.all([
+          a.runInjectionExploitAgent({ ...activityInput, exploreExpansion: true }),
+          a.runXssExploitAgent({ ...activityInput, exploreExpansion: true }),
+          a.runAuthExploitAgent({ ...activityInput, exploreExpansion: true }),
+          a.runAuthzExploitAgent({ ...activityInput, exploreExpansion: true }),
+          a.runSsrfExploitAgent({ ...activityInput, exploreExpansion: true }),
+        ]);
+        for (const [index, vulnerabilityClass] of ['injection', 'xss', 'auth', 'authz', 'ssrf'].entries()) {
+          state.agentMetrics[`${vulnerabilityClass}-exploit-expansion`] = expansionExploitResults[index]!;
+        }
+        state.currentAgent = 'record-expansion';
+        state.agentMetrics['record-expansion'] = await a.runRecordAgent({ ...activityInput, exploreExpansion: true });
         state.currentAgent = 'report';
       }
       const assembled = await runOperation('report:assemble', 'Assemble report inputs', () =>

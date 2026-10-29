@@ -15,6 +15,7 @@ import { PentestError } from '../services/error-handling.js';
 import { ErrorCode } from '../types/errors.js';
 import type { AgentEndResult } from '../types/index.js';
 import type { AgentMetrics } from '../types/metrics.js';
+import type { PostExploitationProgress, PostExploitationStage } from '../types/post-exploitation.js';
 import {
   type DurableScanState,
   type MiscellaneousOutcome,
@@ -233,6 +234,17 @@ export class AuditSession {
     try {
       await this.metricsTracker.reload();
       return this.metricsTracker.getDurableScanState();
+    } finally {
+      unlock();
+    }
+  }
+
+  async savePostExploitationProgress(stage: PostExploitationStage, progress: PostExploitationProgress): Promise<PostExploitationProgress> {
+    await this.ensureInitialized();
+    const unlock = await sessionMutex.lock(this.sessionId);
+    try {
+      await this.metricsTracker.reload();
+      return await this.metricsTracker.savePostExploitationProgress(stage, progress);
     } finally {
       unlock();
     }
