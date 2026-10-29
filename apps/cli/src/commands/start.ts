@@ -97,8 +97,14 @@ function isCurrentDurableState(value: unknown): boolean {
   const baselineAgents = ['pre-recon', 'recon', ...FIXED_CLASSES.map((name) => `${name}-vuln`)];
   if (value.exploit) baselineAgents.push(...FIXED_CLASSES.map((name) => `${name}-exploit`));
   baselineAgents.push('report');
+  const legacyAgents = [...baselineAgents];
+  if (value.exploit) baselineAgents.splice(baselineAgents.length - 1, 0, 'record', 'explore');
+  const recordOnlyAgents = [...legacyAgents];
+  if (value.exploit) recordOnlyAgents.splice(recordOnlyAgents.length - 1, 0, 'record');
   const expected = value.expected_agents;
-  return arraysEqual(expected, baselineAgents) || arraysEqual(expected, [...baselineAgents, 'miscellaneous-exploit']);
+  return [baselineAgents, recordOnlyAgents, legacyAgents].some((agents) =>
+    arraysEqual(expected, agents) || arraysEqual(expected, [...agents, 'miscellaneous-exploit']),
+  );
 }
 
 /** One refusal for damaged CLI-owned or worker-owned workspace records, whichever reads first. */

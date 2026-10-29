@@ -915,6 +915,7 @@ function expectedAgentsFor(exploit: boolean): AgentName[] {
       expected.push(`${vulnerabilityClass}-exploit` as AgentName);
     }
     expected.push('record');
+    expected.push('explore');
   }
   expected.push('report');
   return expected;
@@ -923,10 +924,13 @@ function expectedAgentsFor(exploit: boolean): AgentName[] {
 function isExpectedAgentSet(value: unknown, exploit: boolean): value is readonly AgentName[] {
   if (!Array.isArray(value) || value.some((agent) => typeof agent !== 'string')) return false;
   const initial = expectedAgentsFor(exploit);
-  const legacy = initial.filter((agent) => agent !== 'record');
+  const recordOnly = initial.filter((agent) => agent !== 'explore');
+  const legacy = initial.filter((agent) => agent !== 'record' && agent !== 'explore');
   return (
     arraysEqual(value, initial) ||
     arraysEqual(value, [...initial, 'miscellaneous-exploit']) ||
+    arraysEqual(value, recordOnly) ||
+    arraysEqual(value, [...recordOnly, 'miscellaneous-exploit']) ||
     arraysEqual(value, legacy) ||
     arraysEqual(value, [...legacy, 'miscellaneous-exploit'])
   );

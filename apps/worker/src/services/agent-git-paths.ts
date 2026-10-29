@@ -61,5 +61,21 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
       );
     }
   }
+  if (agentName === 'explore') {
+    paths.push('explore_templates.json', 'explore_search_results.json');
+  }
+  const vulnExpansionArtifacts: Readonly<Partial<Record<AgentName, string>>> = {
+    'injection-vuln': 'explore_expansion_injection.json',
+    'xss-vuln': 'explore_expansion_xss.json',
+    'auth-vuln': 'explore_expansion_auth.json',
+    'ssrf-vuln': 'explore_expansion_ssrf.json',
+    'authz-vuln': 'explore_expansion_authz.json',
+  };
+  const expansionArtifact = vulnExpansionArtifacts[agentName];
+  if (expansionArtifact) {
+    paths.push(expansionArtifact);
+    const vulnerabilityClass = agentName.replace(/-vuln$/, '');
+    paths.push(`explore_expansion_${vulnerabilityClass}.md`);
+  }
   return [...new Set(paths)];
 }

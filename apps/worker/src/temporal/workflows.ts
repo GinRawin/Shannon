@@ -124,7 +124,16 @@ const acts = proxyActivities<typeof activities>({
 const vulnAnalysisActs = proxyActivities<
   Pick<
     typeof activities,
-    'runInjectionVulnAgent' | 'runXssVulnAgent' | 'runAuthVulnAgent' | 'runAuthzVulnAgent' | 'runSsrfVulnAgent'
+    | 'runInjectionVulnAgent'
+    | 'runXssVulnAgent'
+    | 'runAuthVulnAgent'
+    | 'runAuthzVulnAgent'
+    | 'runSsrfVulnAgent'
+    | 'runInjectionVulnExpansionAgent'
+    | 'runXssVulnExpansionAgent'
+    | 'runAuthVulnExpansionAgent'
+    | 'runAuthzVulnExpansionAgent'
+    | 'runSsrfVulnExpansionAgent'
   >
 >({
   startToCloseTimeout: '5 hours',
@@ -1200,6 +1209,21 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
         state.agentMetrics.record = await a.runRecordAgent(activityInput);
         markCompleted('record');
         if (input.checkpointsEnabled) await a.saveCheckpoint(activityInput, 'record', 'exploitation', state);
+        state.currentAgent = 'explore';
+        state.agentMetrics.explore = await a.runExploreAgent(activityInput);
+        markCompleted('explore');
+        if (input.checkpointsEnabled) await a.saveCheckpoint(activityInput, 'explore', 'exploitation', state);
+        state.currentAgent = 'vulnerability-analysis-expansion';
+        const expansionResults = await Promise.all([
+          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runInjectionVulnExpansionAgent(activityInput)),
+          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runXssVulnExpansionAgent(activityInput)),
+          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runAuthVulnExpansionAgent(activityInput)),
+          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runAuthzVulnExpansionAgent(activityInput)),
+          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runSsrfVulnExpansionAgent(activityInput)),
+        ]);
+        for (const [index, vulnerabilityClass] of ['injection', 'xss', 'auth', 'authz', 'ssrf'].entries()) {
+          state.agentMetrics[`${vulnerabilityClass}-vuln-expansion`] = expansionResults[index]!;
+        }
         state.currentAgent = 'report';
       }
       const assembled = await runOperation('report:assemble', 'Assemble report inputs', () =>

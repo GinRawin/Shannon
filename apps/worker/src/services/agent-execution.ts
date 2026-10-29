@@ -69,6 +69,8 @@ export interface AgentExecutionInput {
    * report attempt outright, so this must stay 'report-draft' for that agent or execution fails.
    */
   successDisposition?: 'terminal' | 'report-draft';
+  /** Trusted workflow guidance appended for a bounded targeted re-analysis pass. */
+  promptAddendum?: string | undefined;
   cancellationSignal?: AbortSignal | undefined;
 }
 
@@ -170,6 +172,7 @@ export class AgentExecutionService {
       failedClasses,
       writeDeliverable,
       successDisposition = 'terminal',
+      promptAddendum,
       cancellationSignal,
     } = input;
     const gitPaths = getAgentGitPaths(agentName);
@@ -215,6 +218,7 @@ export class AgentExecutionService {
         logger,
         promptDir,
       );
+      if (promptAddendum) prompt = `${prompt}\n\n${promptAddendum}`;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return err(

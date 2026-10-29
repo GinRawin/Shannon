@@ -120,10 +120,17 @@ export const AGENTS: Readonly<Record<AgentName, AgentDefinition>> = Object.freez
     promptTemplate: 'record',
     deliverableFilename: 'record_verification.md',
   },
+  explore: {
+    name: 'explore',
+    displayName: 'Explore agent',
+    prerequisites: ['record'],
+    promptTemplate: 'explore',
+    deliverableFilename: 'explore_deliverable.md',
+  },
   report: {
     name: 'report',
     displayName: 'Report agent',
-    prerequisites: ['injection-exploit', 'xss-exploit', 'auth-exploit', 'ssrf-exploit', 'authz-exploit', 'record'],
+    prerequisites: ['injection-exploit', 'xss-exploit', 'auth-exploit', 'ssrf-exploit', 'authz-exploit', 'record', 'explore'],
     promptTemplate: 'report-executive',
     deliverableFilename: 'comprehensive_security_assessment_report.md',
   },
@@ -148,6 +155,7 @@ export const AGENT_PHASE_MAP: Readonly<Record<AgentName, PhaseName>> = Object.fr
   'ssrf-exploit': 'exploitation',
   'miscellaneous-exploit': 'exploitation',
   record: 'exploitation',
+  explore: 'exploitation',
   report: 'reporting',
 });
 

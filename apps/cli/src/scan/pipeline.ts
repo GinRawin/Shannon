@@ -86,6 +86,30 @@ export const PIPELINE: readonly PhaseSpec[] = [
     ],
   },
   {
+    key: 'recording',
+    label: 'Record',
+    parallel: false,
+    agents: [{ name: 'record', label: 'record', activityType: 'runRecordAgent' }],
+  },
+  {
+    key: 'exploration',
+    label: 'Explore',
+    parallel: false,
+    agents: [{ name: 'explore', label: 'explore', activityType: 'runExploreAgent' }],
+  },
+  {
+    key: 'vulnerability-analysis-expansion',
+    label: 'Vulnerability Analysis (Template Expansion)',
+    parallel: true,
+    agents: [
+      { name: 'injection-vuln-expansion', label: 'injection', activityType: 'runInjectionVulnExpansionAgent' },
+      { name: 'xss-vuln-expansion', label: 'xss', activityType: 'runXssVulnExpansionAgent' },
+      { name: 'auth-vuln-expansion', label: 'auth', activityType: 'runAuthVulnExpansionAgent' },
+      { name: 'ssrf-vuln-expansion', label: 'ssrf', activityType: 'runSsrfVulnExpansionAgent' },
+      { name: 'authz-vuln-expansion', label: 'authz', activityType: 'runAuthzVulnExpansionAgent' },
+    ],
+  },
+  {
     key: 'reporting',
     label: 'Reporting',
     parallel: false,
@@ -115,6 +139,14 @@ export function pipelineForState(state: PipelineState | null): readonly PhaseSpe
     const agents = phase.agents.filter((agent) => expected.has(agent.name));
     if (expected.has(MISCELLANEOUS_EXPLOIT_AGENT.name)) agents.push(MISCELLANEOUS_EXPLOIT_AGENT);
     return { ...phase, agents };
+  }).map((phase) => {
+    if (phase.key === 'recording' || phase.key === 'exploration') {
+      return { ...phase, agents: phase.agents.filter((agent) => expected.has(agent.name)) };
+    }
+    if (phase.key === 'vulnerability-analysis-expansion') {
+      return expected.has('explore') ? phase : { ...phase, agents: [] };
+    }
+    return phase;
   }).filter((phase) => phase.agents.length > 0);
 }
 

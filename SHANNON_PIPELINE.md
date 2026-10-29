@@ -118,7 +118,15 @@ Record Agent 在 Exploit Agent 完成后读取已发现漏洞及其利用命令�
 
 主要输出包括 `record_verification.json`、`pending_manual_verification.md` 和各类别的 `*_recorded_exploitation_evidence.md`。采集到的 HTTP 数据包保存在 `.shannon/deliverables/http-exchanges/`。
 
-## 8. Report：最终报告
+## 8. Explore：模板扩展
+
+Explore Agent 只根据 record 通过的漏洞及其 sink 代码位置提炼少量搜索模板（例如 SQL 执行调用的正则），不负责扫描源码。随后由确定性程序用 ripgrep 搜索源码，校验模板确实匹配原 sink，并把命中位置交给对应类别的漏洞分析 Agent 做一次定向复核。
+
+扩展分析只确认这些位置是否属于已验证漏洞的同一模式；不新增漏洞 ID，也不再次运行 exploit 或 record。确认的代码位置会补充到原漏洞报告。整个扩展只执行一轮，不递归回到 Explore。
+
+主要输出：`explore_templates.json`、`explore_search_results.json` 和各类别的 `explore_expansion_*.md`。
+
+## 9. Report：最终报告
 
 Report Agent 汇总经过验证的结果，生成面向用户的安全评估报告，通常包括：
 
@@ -144,19 +152,21 @@ Analysis 强调覆盖面、数据流和安全控制是否匹配；Exploit 强调
 ## 主要交付物流转
 
 ```text
-pre_recon_deliverable.md
-          ↓
-recon_deliverable.md
-          ↓
-*_analysis_deliverable.md
-*_exploitation_queue.json
-          ↓
-*_exploitation_evidence.md
-          ↓
-record_verification.json
-pending_manual_verification.md
-*_recorded_exploitation_evidence.md
-          ↓
-Security-Assessment-Report.md / PDF
+pre_recon_deliverable.md → recon_deliverable.md → 漏洞分析 Agent
+                                                       │
+                                                       ↓
+                                                   exploit
+                                                       ↓
+                                                    record
+                                                       ↓
+                                      Explore 模板提取 → 确定性源码搜索
+                                                       │
+                 命中位置 + 已验证漏洞模板           │
+                 ┌─────────────────────────────────────┘
+                 ↓
+         同类别漏洞分析 Agent（仅定向复核一轮）
+                 │ 补充原漏洞的代码位置
+                 ↓
+       Security-Assessment-Report.md / PDF
 ```
 

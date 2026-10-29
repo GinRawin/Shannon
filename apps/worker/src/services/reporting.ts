@@ -189,6 +189,22 @@ async function assembleFinalReportInternal(
       logger.info(`No ${file.name} deliverable found`);
       failedClassSet.add(file.vulnerabilityClass);
     }
+    if (options.exploit === true && !failedClassSet.has(file.vulnerabilityClass)) {
+      const expansionPath = `explore_expansion_${file.vulnerabilityClass}.md`;
+      try {
+        const expanded = await readCommittedFile(dir, expansionPath);
+        if (expanded.state === 'corrupt') throw new Error('committed expansion assessment is corrupt');
+        if (expanded.state === 'present') {
+          sections.push(expanded.contents);
+          logger.info(`Added ${file.name} template-expansion analysis from ${expansionPath}`);
+        }
+      } catch (error) {
+        if (!collectClassFailures) throw error;
+        const err = error as Error;
+        logger.warn(`Could not read ${expansionPath}: ${err.message}`);
+        failedClassSet.add(file.vulnerabilityClass);
+      }
+    }
   }
 
   const finalContent = sections.join('\n\n');
