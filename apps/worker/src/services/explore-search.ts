@@ -14,9 +14,77 @@ export interface ExploreSearchMatch {
   excerpt: string;
 }
 
+interface CandidateCodeLocation {
+  file?: unknown;
+  start_line?: unknown;
+  end_line?: unknown;
+  role?: unknown;
+}
+
+type ExploreSearchLocation = Pick<ExploreSearchMatch, 'match_file' | 'match_line'>;
+
+/** True when a structured location covers an exact deterministic Explore match. */
+export function locationMatchesExploreSearch(
+  location: CandidateCodeLocation,
+  matches: readonly ExploreSearchLocation[],
+): boolean {
+  if (
+    typeof location.file !== 'string' ||
+    !Number.isInteger(location.start_line) ||
+    (location.start_line as number) < 1
+  )
+    return false;
+  const startLine = location.start_line as number;
+  const endLine = location.end_line === undefined ? startLine : location.end_line;
+  if (!Number.isInteger(endLine) || (endLine as number) < startLine) return false;
+  return matches.some(
+    (match) =>
+      match.match_file === location.file && match.match_line >= startLine && match.match_line <= (endLine as number),
+  );
+}
+
+/** Independent candidates must identify an Explore hit as one of their sink locations. */
+export function candidateMatchesExploreSearch(
+  candidate: Record<string, unknown>,
+  matches: readonly ExploreSearchLocation[],
+): boolean {
+  return (
+    Array.isArray(candidate.code_locations) &&
+    candidate.code_locations.some(
+      (location) =>
+        !!location &&
+        typeof location === 'object' &&
+        (location as CandidateCodeLocation).role === 'sink' &&
+        locationMatchesExploreSearch(location as CandidateCodeLocation, matches),
+    )
+  );
+}
+
 const SOURCE_GLOBS = [
-  '*.c', '*.cc', '*.cpp', '*.h', '*.hpp', '*.go', '*.java', '*.kt', '*.js', '*.jsx', '*.mjs', '*.cjs',
-  '*.ts', '*.tsx', '*.mts', '*.cts', '*.py', '*.rb', '*.php', '*.rs', '*.cs', '*.html', '*.vue', '*.svelte',
+  '*.c',
+  '*.cc',
+  '*.cpp',
+  '*.h',
+  '*.hpp',
+  '*.go',
+  '*.java',
+  '*.kt',
+  '*.js',
+  '*.jsx',
+  '*.mjs',
+  '*.cjs',
+  '*.ts',
+  '*.tsx',
+  '*.mts',
+  '*.cts',
+  '*.py',
+  '*.rb',
+  '*.php',
+  '*.rs',
+  '*.cs',
+  '*.html',
+  '*.vue',
+  '*.svelte',
 ];
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_TOTAL_MATCHES = 500;
@@ -32,7 +100,11 @@ function parseJsonMatches(output: string, root: string, template: ExploreTemplat
   for (const line of output.split('\n')) {
     if (!line) continue;
     let event: Record<string, unknown>;
-    try { event = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
     if (event.type !== 'match' || !event.data || typeof event.data !== 'object') continue;
     const data = event.data as Record<string, unknown>;
     const pathData = data.path as { text?: unknown } | undefined;
@@ -58,10 +130,22 @@ function parseJsonMatches(output: string, root: string, template: ExploreTemplat
 async function runRipgrep(root: string, pattern: string, onlyFile?: string): Promise<string> {
   return await new Promise((resolve, reject) => {
     const args = [
-      '--json', '--line-number', '--max-columns', '1000', '--max-columns-preview', '--color', 'never',
+      '--json',
+      '--line-number',
+      '--max-columns',
+      '1000',
+      '--max-columns-preview',
+      '--color',
+      'never',
       ...SOURCE_GLOBS.flatMap((glob) => ['--glob', glob]),
-      '--glob', '!**/node_modules/**', '--glob', '!**/.git/**', '--glob', '!**/.shannon/**',
-      '-e', pattern,
+      '--glob',
+      '!**/node_modules/**',
+      '--glob',
+      '!**/.git/**',
+      '--glob',
+      '!**/.shannon/**',
+      '-e',
+      pattern,
       ...(onlyFile ? ['--', onlyFile] : ['--', root]),
     ];
     const child = spawn('rg', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -83,7 +167,12 @@ async function runRipgrep(root: string, pattern: string, onlyFile?: string): Pro
     child.once('error', reject);
     child.once('close', (code) => {
       if (code === 0 || code === 1) resolve(Buffer.concat(stdout).toString('utf8'));
-      else reject(new Error(`Source search failed (rg exit ${String(code)}): ${Buffer.concat(stderr).toString('utf8').slice(0, 1000)}`));
+      else
+        reject(
+          new Error(
+            `Source search failed (rg exit ${String(code)}): ${Buffer.concat(stderr).toString('utf8').slice(0, 1000)}`,
+          ),
+        );
     });
   });
 }
@@ -92,7 +181,11 @@ async function runRipgrep(root: string, pattern: string, onlyFile?: string): Pro
 export async function searchExploreTemplates(
   sourceDir: string,
   templates: readonly ExploreTemplate[],
-): Promise<{ matches: ExploreSearchMatch[]; rejected: Array<{ template: ExploreTemplate; reason: string }>; truncated: boolean }> {
+): Promise<{
+  matches: ExploreSearchMatch[];
+  rejected: Array<{ template: ExploreTemplate; reason: string }>;
+  truncated: boolean;
+}> {
   const root = await realpath(sourceDir);
   const matches: ExploreSearchMatch[] = [];
   const rejected: Array<{ template: ExploreTemplate; reason: string }> = [];
@@ -104,7 +197,9 @@ export async function searchExploreTemplates(
     }
     const sinkAbsolute = path.resolve(root, template.sink_file);
     let sinkReal: string;
-    try { sinkReal = await realpath(sinkAbsolute); } catch {
+    try {
+      sinkReal = await realpath(sinkAbsolute);
+    } catch {
       rejected.push({ template, reason: 'Sink path does not exist in the assessed source tree.' });
       continue;
     }
@@ -137,7 +232,10 @@ export async function searchExploreTemplates(
       matches.push(match);
       templateCount++;
     }
-    if (matches.length >= MAX_TOTAL_MATCHES) { truncated = true; break; }
+    if (matches.length >= MAX_TOTAL_MATCHES) {
+      truncated = true;
+      break;
+    }
   }
   const unique = new Map<string, ExploreSearchMatch>();
   for (const match of matches) unique.set(`${match.finding_id}:${match.match_file}:${match.match_line}`, match);

@@ -116,7 +116,14 @@ export const AGENTS: Readonly<Record<AgentName, AgentDefinition>> = Object.freez
   record: {
     name: 'record',
     displayName: 'Record agent',
-    prerequisites: ['injection-exploit', 'xss-exploit', 'auth-exploit', 'ssrf-exploit', 'authz-exploit', 'miscellaneous-exploit'],
+    prerequisites: [
+      'injection-exploit',
+      'xss-exploit',
+      'auth-exploit',
+      'ssrf-exploit',
+      'authz-exploit',
+      'miscellaneous-exploit',
+    ],
     promptTemplate: 'record',
     deliverableFilename: 'record_verification.md',
   },
@@ -130,7 +137,15 @@ export const AGENTS: Readonly<Record<AgentName, AgentDefinition>> = Object.freez
   report: {
     name: 'report',
     displayName: 'Report agent',
-    prerequisites: ['injection-exploit', 'xss-exploit', 'auth-exploit', 'ssrf-exploit', 'authz-exploit', 'record', 'explore'],
+    prerequisites: [
+      'injection-exploit',
+      'xss-exploit',
+      'auth-exploit',
+      'ssrf-exploit',
+      'authz-exploit',
+      'record',
+      'explore',
+    ],
     promptTemplate: 'report-executive',
     deliverableFilename: 'comprehensive_security_assessment_report.md',
   },
@@ -216,6 +231,9 @@ export const PLAYWRIGHT_SESSION_MAPPING: Record<string, PlaywrightSession> = Obj
 
   // Conditional analysis-less class; it may run beside the five analysis-backed exploit agents.
   'exploit-miscellaneous': 'agent6',
+
+  // Post-exploitation replay is sequential, so it can safely reuse agent1.
+  record: 'agent1',
 
   // Phase 5: Reporting
   'report-executive': 'agent3',

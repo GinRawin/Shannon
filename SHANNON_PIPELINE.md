@@ -122,9 +122,11 @@ Record Agent 在 Exploit Agent 完成后读取已发现漏洞及其利用命令�
 
 Explore Agent 只根据 record 通过的漏洞及其 sink 代码位置提炼少量搜索模板（例如 SQL 执行调用的正则），不负责扫描源码。随后由确定性程序用 ripgrep 搜索源码，校验模板确实匹配原 sink，并把命中位置交给对应类别的漏洞分析 Agent 做一次定向复核。
 
-扩展分析只确认这些位置是否属于已验证漏洞的同一模式；不新增漏洞 ID，也不再次运行 exploit 或 record。确认的代码位置会补充到原漏洞报告。整个扩展只执行一轮，不递归回到 Explore。
+扩展分析会检查每个命中的完整数据流。属于原漏洞同一实例的位置会补充到原报告；独立漏洞候选只有在其 sink 精确对应 Explore 命中时才由宿主接收，并分配新的稳定 ID。新候选随后进入独立的 Exploit 和第二次 Record；最终报告只接收重放验证通过的影响证据，或因明确外部条件受阻但已有源码确认的发现。整个扩展只执行一轮，不递归回到 Explore。
 
-主要输出：`explore_templates.json`、`explore_search_results.json` 和各类别的 `explore_expansion_*.md`。
+Record、Explore、各类别扩展分析、扩展 Exploit 和第二次 Record 都保存独立的持久完成状态与 Git checkpoint。恢复扫描会跳过已经完成的步骤；如果会影响目标的步骤在保存完成状态前中断，系统会要求人工确认，而不会自动重放请求。
+
+主要输出：`explore_templates.json`、`explore_search_results.json`、各类别的 `explore_candidates_*.json`、`explore_expansion_*.md` 以及扩展 Exploit/Record 证据。
 
 ## 9. Report：最终报告
 

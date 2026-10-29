@@ -1,0 +1,2 @@
+<template_expansion_pass>
+This is a pipeline wiring test. Do not submit expansion candidates. Finish successfully after reading the supplied targets.

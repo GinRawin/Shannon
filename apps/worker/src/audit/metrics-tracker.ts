@@ -16,7 +16,11 @@ import { AGENT_PHASE_MAP, type PhaseName } from '../session-manager.js';
 import { ErrorCode } from '../types/errors.js';
 import type { AgentEndResult, AgentName } from '../types/index.js';
 import type { AgentMetrics } from '../types/metrics.js';
-import type { PostExploitationProgress, PostExploitationStage } from '../types/post-exploitation.js';
+import {
+  POST_EXPLOITATION_STAGES,
+  type PostExploitationProgress,
+  type PostExploitationStage,
+} from '../types/post-exploitation.js';
 import {
   appendPartialReasons,
   createInitialDurableScanState,
@@ -361,12 +365,18 @@ export class MetricsTracker {
     return structuredClone(initialized);
   }
 
-  async savePostExploitationProgress(stage: PostExploitationStage, progress: PostExploitationProgress): Promise<PostExploitationProgress> {
+  async savePostExploitationProgress(
+    stage: PostExploitationStage,
+    progress: PostExploitationProgress,
+  ): Promise<PostExploitationProgress> {
     const data = this.requireData();
     const state = this.requireDurableScanState();
     const existing = state.post_exploitation?.[stage];
     if (existing?.status === 'completed') {
-      if (existing.token !== progress.token || (progress.status === 'completed' && existing.checkpoint !== progress.checkpoint))
+      if (
+        existing.token !== progress.token ||
+        (progress.status === 'completed' && existing.checkpoint !== progress.checkpoint)
+      )
         throw new RunStateError('DurableStateConflictError', 'post-exploitation-checkpoint-conflict');
       return structuredClone(existing);
     }
@@ -375,7 +385,8 @@ export class MetricsTracker {
     if (existing && existing.token !== progress.token)
       throw new RunStateError('DurableStateConflictError', 'post-exploitation-token-conflict');
     const next = { ...state, post_exploitation: { ...state.post_exploitation, [stage]: progress } };
-    if (!isDurableScanState(next)) throw new RunStateError('CorruptedSessionError', 'post-exploitation-progress-invalid');
+    if (!isDurableScanState(next))
+      throw new RunStateError('CorruptedSessionError', 'post-exploitation-progress-invalid');
     data.durableScanState = next;
     await this.save();
     return structuredClone(progress);
@@ -890,7 +901,9 @@ export class MetricsTracker {
 
     // Group agents by phase using imported AGENT_PHASE_MAP
     for (const [agentName, agentData] of successfulAgents) {
-      const phase = AGENT_PHASE_MAP[agentName as AgentName];
+      const phase = POST_EXPLOITATION_STAGES.includes(agentName as PostExploitationStage)
+        ? 'exploitation'
+        : AGENT_PHASE_MAP[agentName as AgentName];
       if (phase) {
         phases[phase].push(agentData);
       }

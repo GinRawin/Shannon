@@ -340,8 +340,8 @@ export function renderReport(data: ReportData): string {
   }
 
   // 3. Per-category finding sections
-  const subheading = exploitEnabled ? 'Successfully Exploited Vulnerabilities' : 'Identified Vulnerabilities';
-  const heading = exploitEnabled ? 'Exploitation Evidence' : 'Findings';
+  const subheading = exploitEnabled ? 'Evidence-Gated Vulnerabilities' : 'Identified Vulnerabilities';
+  const heading = exploitEnabled ? 'Validation Evidence' : 'Findings';
 
   for (const cat of sortedCategories) {
     const catFindings = byCategory.get(cat) ?? [];

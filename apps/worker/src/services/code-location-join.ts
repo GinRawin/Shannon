@@ -33,8 +33,35 @@ interface LocationIndexes {
   readonly current: ReadonlyMap<string, JoinedLocations>;
 }
 
+function mergeCodeLocations(
+  existing: readonly QueueCodeLocation[] | undefined,
+  additions: readonly QueueCodeLocation[],
+): QueueCodeLocation[] {
+  const unique = new Map<string, QueueCodeLocation>();
+  for (const location of [...(existing ?? []), ...additions]) {
+    unique.set(JSON.stringify(location), location);
+  }
+  return [...unique.values()];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isQueueCodeLocation(value: unknown): value is QueueCodeLocation {
+  if (!isRecord(value) || typeof value.file !== 'string' || value.file.length === 0) return false;
+  if (!['sink', 'source', 'guard'].includes(String(value.role))) return false;
+  if (value.start_line !== undefined && (!Number.isInteger(value.start_line) || (value.start_line as number) < 1))
+    return false;
+  if (value.end_line !== undefined && (!Number.isInteger(value.end_line) || (value.end_line as number) < 1))
+    return false;
+  if (
+    Number.isInteger(value.start_line) &&
+    Number.isInteger(value.end_line) &&
+    (value.end_line as number) < (value.start_line as number)
+  )
+    return false;
+  return value.symbol === undefined || typeof value.symbol === 'string';
 }
 
 // The queue entry is untrusted committed JSON, not a value this process just produced, so its
@@ -121,38 +148,81 @@ async function loadQueueLocations(
   const stableLocations = new Map<string, JoinedLocations>();
   const currentLocations = new Map<string, JoinedLocations>();
   for (const vulnerabilityClass of participatingClasses) {
-    const queueRead = await readCommittedFile(deliverablesPath, `${vulnerabilityClass}_exploitation_queue.json`);
-    if (queueRead.state === 'absent') continue;
-    if (queueRead.state !== 'present') {
-      throw committedLocationError(
-        `${vulnerabilityClass} queue is unreadable`,
-        'committed-queue-unreadable',
-        vulnerabilityClass,
-      );
-    }
-    const decoded = parseJson(queueRead.contents, `${vulnerabilityClass} queue`, vulnerabilityClass);
-    if (!isRecord(decoded) || !Array.isArray(decoded.vulnerabilities)) {
-      throw committedLocationError(
-        `${vulnerabilityClass} queue is malformed`,
-        'committed-queue-malformed',
-        vulnerabilityClass,
-      );
-    }
     const referenceMap = await currentReferenceMap(deliverablesPath, vulnerabilityClass);
-    for (const rawEntry of decoded.vulnerabilities) {
-      if (!isRecord(rawEntry) || typeof rawEntry.ID !== 'string') continue;
-      const stableReference = rawEntry.ID;
-      const entry = rawEntry as QueueEntry;
-      const bundle: JoinedLocations = {
-        ...(Array.isArray(entry.code_locations) && entry.code_locations.length > 0
-          ? { codeLocations: entry.code_locations }
-          : {}),
-        ...(isSastSourceLocation(entry.sast_source_location) ? { sastSourceLocation: entry.sast_source_location } : {}),
-      };
-      if (bundle.codeLocations === undefined && bundle.sastSourceLocation === undefined) continue;
-      stableLocations.set(stableReference, bundle);
-      const currentReference = referenceMap.get(stableReference);
-      if (currentReference !== undefined) currentLocations.set(currentReference, bundle);
+    const queues = [
+      { path: `${vulnerabilityClass}_exploitation_queue.json`, applyReferenceMap: true },
+      { path: `explore_candidates_${vulnerabilityClass}.json`, applyReferenceMap: false },
+    ];
+    for (const queue of queues) {
+      const queueRead = await readCommittedFile(deliverablesPath, queue.path);
+      if (queueRead.state === 'absent') continue;
+      if (queueRead.state !== 'present') {
+        throw committedLocationError(`${queue.path} is unreadable`, 'committed-queue-unreadable', vulnerabilityClass);
+      }
+      const decoded = parseJson(queueRead.contents, queue.path, vulnerabilityClass);
+      if (!isRecord(decoded) || !Array.isArray(decoded.vulnerabilities)) {
+        throw committedLocationError(`${queue.path} is malformed`, 'committed-queue-malformed', vulnerabilityClass);
+      }
+      for (const rawEntry of decoded.vulnerabilities) {
+        if (!isRecord(rawEntry) || typeof rawEntry.ID !== 'string') continue;
+        const stableReference = rawEntry.ID;
+        const entry = rawEntry as QueueEntry;
+        const codeLocations = Array.isArray(entry.code_locations)
+          ? entry.code_locations.filter(isQueueCodeLocation)
+          : [];
+        const bundle: JoinedLocations = {
+          ...(codeLocations.length > 0 ? { codeLocations } : {}),
+          ...(isSastSourceLocation(entry.sast_source_location)
+            ? { sastSourceLocation: entry.sast_source_location }
+            : {}),
+        };
+        if (bundle.codeLocations === undefined && bundle.sastSourceLocation === undefined) continue;
+        stableLocations.set(stableReference, bundle);
+        if (queue.applyReferenceMap) {
+          const currentReference = referenceMap.get(stableReference);
+          if (currentReference !== undefined) currentLocations.set(currentReference, bundle);
+        }
+      }
+    }
+
+    const expansionPath = `explore_expansion_${vulnerabilityClass}.json`;
+    const expansionRead = await readCommittedFile(deliverablesPath, expansionPath);
+    if (expansionRead.state === 'corrupt') {
+      throw committedLocationError(
+        `${expansionPath} is unreadable`,
+        'committed-expansion-unreadable',
+        vulnerabilityClass,
+      );
+    }
+    if (expansionRead.state === 'present') {
+      const expansion = parseJson(expansionRead.contents, expansionPath, vulnerabilityClass);
+      if (!isRecord(expansion) || !Array.isArray(expansion.assessments)) {
+        throw committedLocationError(
+          `${expansionPath} is malformed`,
+          'committed-expansion-malformed',
+          vulnerabilityClass,
+        );
+      }
+      for (const assessment of expansion.assessments) {
+        if (
+          !isRecord(assessment) ||
+          typeof assessment.finding_id !== 'string' ||
+          !Array.isArray(assessment.confirmed_code_locations)
+        )
+          continue;
+        const additions = assessment.confirmed_code_locations.filter((location): location is QueueCodeLocation =>
+          isQueueCodeLocation(location),
+        );
+        if (additions.length === 0) continue;
+        const existing = stableLocations.get(assessment.finding_id);
+        const merged: JoinedLocations = {
+          ...existing,
+          codeLocations: mergeCodeLocations(existing?.codeLocations, additions),
+        };
+        stableLocations.set(assessment.finding_id, merged);
+        const currentReference = referenceMap.get(assessment.finding_id);
+        if (currentReference !== undefined) currentLocations.set(currentReference, merged);
+      }
     }
   }
   return { stable: stableLocations, current: currentLocations };

@@ -23,7 +23,7 @@ import { syncPermissionSystemConfig } from '../ai/pi/permission-system.js';
 import { writePlaywrightStealthConfig } from '../ai/playwright-config-writer.js';
 import { AuditSession } from '../audit/index.js';
 import type { ResumeAttempt } from '../audit/metrics-tracker.js';
-import type { WorkflowPhase } from '../audit/safe-fields.js';
+import type { LoggableAgentName, WorkflowPhase } from '../audit/safe-fields.js';
 import { authStateFile, generateAuditPath, type SessionMetadata } from '../audit/utils.js';
 import type { WorkflowSummary } from '../audit/workflow-logger.js';
 import type { CheckpointContext } from '../interfaces/checkpoint-provider.js';
@@ -31,7 +31,6 @@ import {
   ASSEMBLED_REPORT_PDF_FILENAME,
   DEFAULT_DELIVERABLES_SUBDIR,
   deliverablesDir,
-  PROMPTS_DIR,
   REPORT_FINALIZATION_MANIFEST_FILENAME,
   REPORT_JSON_FILENAME,
   resolveSessionJsonPath,
@@ -43,12 +42,18 @@ import { getContainer, getOrCreateContainer, removeContainer } from '../services
 import { classifyErrorForTemporal, PentestError } from '../services/error-handling.js';
 import { RenumberError, writeAndCommitExactFiles } from '../services/exact-output-commit.js';
 import { ExploitationCheckerService } from '../services/exploitation-checker.js';
+import { candidateMatchesExploreSearch, locationMatchesExploreSearch } from '../services/explore-search.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
 import { executeGitCommandWithRetry } from '../services/git-manager.js';
 import { attachHttpEvidence, configuredCaptureRedactions, writeReproductionScript } from '../services/http-evidence.js';
 import { pdfProvenanceIsCurrent } from '../services/pdf-renderer.js';
+import {
+  PostExploitationReplayRequiredError,
+  runPostExploitationPass,
+  validatePostExploitationCheckpoint,
+} from '../services/post-exploitation.js';
 import { runPreflightChecks } from '../services/preflight.js';
-import { formatVulnClassScope } from '../services/prompt-manager.js';
+import { formatVulnClassScope, loadPromptFragment } from '../services/prompt-manager.js';
 import type { ExploitationDecision, VulnType } from '../services/queue-validation.js';
 import {
   renumberClassFindings as renumberClassFindingsService,
@@ -77,6 +82,7 @@ import { AGENTS } from '../session-manager.js';
 import type { AgentName } from '../types/agents.js';
 import type { ContainerConfig, VulnClass } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
+import type { PostExploitationStage } from '../types/post-exploitation.js';
 import type { ReconciliationClass } from '../types/reconciliation.js';
 import { isErr } from '../types/result.js';
 import {
@@ -369,6 +375,7 @@ async function runAgentActivity(
   successDisposition: 'terminal' | 'report-draft' = 'terminal',
   allowCheckpointSkip = true,
   promptAddendum?: string,
+  auditAgentName?: LoggableAgentName,
 ): Promise<AgentMetrics> {
   const { repoPath, configPath, pipelineTestingMode = false, workflowId, webUrl } = input;
 
@@ -429,6 +436,7 @@ async function runAgentActivity(
         ...(customTools && { customTools }),
         ...(writeDeliverable && { writeDeliverable }),
         ...(promptAddendum !== undefined && { promptAddendum }),
+        ...(auditAgentName !== undefined && { auditAgentName }),
         successDisposition,
         cancellationSignal: Context.current().cancellationSignal,
       },
@@ -544,7 +552,10 @@ async function runVulnAgentWithCollector(
   const { createVulnCollector } = await import('../collectors/vuln-collector.js');
   const { renderVulnDeliverable } = await import('../services/vuln-renderer.js');
 
-  const expansionPath = path.join(deliverablesDir(input.repoPath, input.deliverablesSubdir), `explore_expansion_${vulnClass}.json`);
+  const expansionPath = path.join(
+    deliverablesDir(input.repoPath, input.deliverablesSubdir),
+    `explore_expansion_${vulnClass}.json`,
+  );
   let expansionTargets: Array<{
     finding_id: string;
     producer_id: string;
@@ -554,22 +565,44 @@ async function runVulnAgentWithCollector(
   let originalQueueContents: string | undefined;
   let originalAnalysisContents: string | undefined;
   let priorQueueDocument: { vulnerabilities?: Array<Record<string, unknown> & { ID?: string }> } = {};
+  const priorProducerIds = new Set<string>();
   if (input.exploreExpansion) {
     const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
     const clearStaleExpansion = async (): Promise<void> => {
-      await writeAndCommitExactFiles(dir, [
-        { relPath: `explore_expansion_${vulnClass}.json`, contents: null },
-        { relPath: `explore_expansion_${vulnClass}.md`, contents: null },
-        { relPath: `explore_candidates_${vulnClass}.json`, contents: null },
-      ], `Clear stale ${vulnClass} exploration`, createActivityLogger());
+      await writeAndCommitExactFiles(
+        dir,
+        [
+          { relPath: `explore_expansion_${vulnClass}.json`, contents: null },
+          { relPath: `explore_expansion_${vulnClass}.md`, contents: null },
+          { relPath: `explore_candidates_${vulnClass}.json`, contents: null },
+        ],
+        `Clear stale ${vulnClass} exploration`,
+        createActivityLogger(),
+      );
     };
     const results = JSON.parse(await fs.readFile(path.join(dir, 'explore_search_results.json'), 'utf8')) as {
-      matches?: Array<{ finding_id: string; vulnerability_class: string; match_file: string; match_line: number; excerpt: string; regex: string }>;
+      matches?: Array<{
+        finding_id: string;
+        vulnerability_class: string;
+        match_file: string;
+        match_line: number;
+        excerpt: string;
+        regex: string;
+      }>;
     };
     const classMatches = (results.matches ?? []).filter((match) => match.vulnerability_class === vulnClass);
     if (!classMatches.length) {
       await clearStaleExpansion();
-      return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
+      return {
+        durationMs: 0,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+        costUsd: 0,
+        numTurns: 0,
+        skipped: true,
+      };
     }
     const [manifestRaw, exploitCollectorRaw, priorQueue, priorAnalysis] = await Promise.all([
       fs.readFile(path.join(dir, `${vulnClass}_reconciliation_manifest.json`), 'utf8'),
@@ -580,20 +613,35 @@ async function runVulnAgentWithCollector(
     originalQueueContents = priorQueue;
     originalAnalysisContents = priorAnalysis;
     const manifest = JSON.parse(manifestRaw) as { lineage?: Record<string, { primary?: string; absorbed?: string[] }> };
-    priorQueueDocument = JSON.parse(priorQueue) as { vulnerabilities?: Array<Record<string, unknown> & { ID?: string }> };
-    const exploitEntries = JSON.parse(exploitCollectorRaw) as Array<Record<string, unknown> & { vulnerability_id?: string }>;
+    priorQueueDocument = JSON.parse(priorQueue) as {
+      vulnerabilities?: Array<Record<string, unknown> & { ID?: string }>;
+    };
+    const exploitEntries = JSON.parse(exploitCollectorRaw) as Array<
+      Record<string, unknown> & { vulnerability_id?: string }
+    >;
     const entryById = new Map(exploitEntries.map((entry) => [entry.vulnerability_id, entry]));
     const grouped = new Map<string, typeof classMatches>();
     for (const match of classMatches) grouped.set(match.finding_id, [...(grouped.get(match.finding_id) ?? []), match]);
     const producerPrefix: Record<typeof vulnClass, string> = {
-      injection: 'INJ', xss: 'XSS', auth: 'AUTH', ssrf: 'SSRF', authz: 'AUTHZ',
+      injection: 'INJ',
+      xss: 'XSS',
+      auth: 'AUTH',
+      ssrf: 'SSRF',
+      authz: 'AUTHZ',
     };
-    const lineageIds = Object.values(manifest.lineage ?? {}).flatMap((entry) => [entry.primary, ...(entry.absorbed ?? [])]);
+    const lineageIds = Object.values(manifest.lineage ?? {}).flatMap((entry) => [
+      entry.primary,
+      ...(entry.absorbed ?? []),
+    ]);
+    for (const lineageId of lineageIds) {
+      if (lineageId !== undefined) priorProducerIds.add(lineageId);
+    }
     const producerIdPattern = new RegExp(`^${producerPrefix[vulnClass]}-VULN-(\\d+)$`);
-    let nextExpansionId = lineageIds.reduce((max, id) => {
-      const number = producerIdPattern.exec(id ?? '')?.[1];
-      return number ? Math.max(max, Number(number)) : max;
-    }, 0) + 1;
+    let nextExpansionId =
+      lineageIds.reduce((max, id) => {
+        const number = producerIdPattern.exec(id ?? '')?.[1];
+        return number ? Math.max(max, Number(number)) : max;
+      }, 0) + 1;
     expansionTargets = [...grouped.entries()].flatMap(([findingId, matches]) => {
       const vulnerability = entryById.get(findingId);
       if (!manifest.lineage?.[findingId] || !vulnerability) return [];
@@ -602,7 +650,16 @@ async function runVulnAgentWithCollector(
     });
     if (!expansionTargets.length) {
       await clearStaleExpansion();
-      return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
+      return {
+        durationMs: 0,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+        costUsd: 0,
+        numTurns: 0,
+        skipped: true,
+      };
     }
   }
 
@@ -624,72 +681,184 @@ async function runVulnAgentWithCollector(
       let submitted: Array<Record<string, unknown>> = [];
       try {
         const parsed = JSON.parse(await fs.readFile(queuePath, 'utf8')) as { vulnerabilities?: unknown };
-        if (Array.isArray(parsed.vulnerabilities)) submitted = parsed.vulnerabilities.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object');
-      } catch { /* an absent submission yields no expansion assessments */ }
+        if (Array.isArray(parsed.vulnerabilities))
+          submitted = parsed.vulnerabilities.filter(
+            (entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object',
+          );
+      } catch {
+        /* an absent submission yields no expansion assessments */
+      }
       const targetsByProducer = new Map(expansionTargets.map((target) => [target.producer_id, target]));
-      const independentProducers = submitted.filter((entry) =>
-        typeof entry.ID === 'string' && !targetsByProducer.has(entry.ID),
+      const allExpansionMatches = expansionTargets.flatMap((target) => target.matches);
+      const unboundIndependentProducers = submitted.filter(
+        (entry) => typeof entry.ID === 'string' && !targetsByProducer.has(entry.ID) && !priorProducerIds.has(entry.ID),
       );
-      const usedTaskIds = new Set((priorQueueDocument.vulnerabilities ?? []).map((entry) => entry.ID).filter((id): id is string => typeof id === 'string'));
-      const idPrefix: Record<typeof vulnClass, string> = { injection: 'INJ', xss: 'XSS', auth: 'AUTH', ssrf: 'SSRF', authz: 'AUTHZ' };
+      const independentProducers = unboundIndependentProducers.filter((entry) =>
+        candidateMatchesExploreSearch(entry, allExpansionMatches),
+      );
+      const usedTaskIds = new Set(
+        (priorQueueDocument.vulnerabilities ?? [])
+          .map((entry) => entry.ID)
+          .filter((id): id is string => typeof id === 'string'),
+      );
+      const idPrefix: Record<typeof vulnClass, string> = {
+        injection: 'INJ',
+        xss: 'XSS',
+        auth: 'AUTH',
+        ssrf: 'SSRF',
+        authz: 'AUTHZ',
+      };
       const idPattern = new RegExp(`^${idPrefix[vulnClass]}-(\\d+)$`);
       let nextTaskId = [...usedTaskIds].reduce((max, id) => Math.max(max, Number(idPattern.exec(id)?.[1] ?? 0)), 0) + 1;
-      const independentCandidates: Array<Record<string, unknown> & { ID: string }> = independentProducers.map((entry) => {
-        const { ID: _producerId, ...candidate } = entry;
-        return { ...candidate, ID: `${idPrefix[vulnClass]}-${String(nextTaskId++).padStart(2, '0')}` };
-      });
+      const independentCandidates: Array<Record<string, unknown> & { ID: string }> = independentProducers.map(
+        (entry) => {
+          const { ID: _producerId, ...candidate } = entry;
+          return { ...candidate, ID: `${idPrefix[vulnClass]}-${String(nextTaskId++).padStart(2, '0')}` };
+        },
+      );
       const assessments = submitted.flatMap((entry) => {
         const target = typeof entry.ID === 'string' ? targetsByProducer.get(entry.ID) : undefined;
         if (!target) return [];
-        const allowedFiles = new Set(target.matches.map((match) => match.match_file));
         const locations = Array.isArray(entry.code_locations)
-          ? entry.code_locations.filter((location) => !!location && typeof location === 'object' && typeof (location as { file?: unknown }).file === 'string' && allowedFiles.has((location as { file: string }).file))
+          ? entry.code_locations.filter(
+              (location) =>
+                !!location &&
+                typeof location === 'object' &&
+                locationMatchesExploreSearch(
+                  location as { file?: unknown; start_line?: unknown; end_line?: unknown },
+                  target.matches,
+                ),
+            )
           : [];
         if (!locations.length) return [];
-        return [{
-          finding_id: target.finding_id,
-          producer_id: target.producer_id,
-          title: typeof entry.title === 'string' ? entry.title : target.vulnerability.title,
-          assessment: ['verdict', 'mismatch_reason', 'missing_defense', 'exploitation_hypothesis', 'guard_evidence', 'reason', 'notes']
-            .flatMap((key) => typeof entry[key] === 'string' ? [`${key}: ${entry[key]}`] : [])
-            .join('; '),
-          matched_locations: target.matches.map((match) => ({ file: match.match_file, line: match.match_line, excerpt: match.excerpt })),
-          confirmed_code_locations: locations,
-        }];
+        return [
+          {
+            finding_id: target.finding_id,
+            producer_id: target.producer_id,
+            title: typeof entry.title === 'string' ? entry.title : target.vulnerability.title,
+            assessment: [
+              'verdict',
+              'mismatch_reason',
+              'missing_defense',
+              'exploitation_hypothesis',
+              'guard_evidence',
+              'reason',
+              'notes',
+            ]
+              .flatMap((key) => (typeof entry[key] === 'string' ? [`${key}: ${entry[key]}`] : []))
+              .join('; '),
+            matched_locations: target.matches.map((match) => ({
+              file: match.match_file,
+              line: match.match_line,
+              excerpt: match.excerpt,
+            })),
+            confirmed_code_locations: locations,
+          },
+        ];
       });
       const inputDigest = createHash('sha256').update(JSON.stringify(expansionTargets)).digest('hex');
       const candidateQueuePath = path.join(deliverablesPath, `explore_candidates_${vulnClass}.json`);
       await atomicWrite(candidateQueuePath, `${JSON.stringify({ vulnerabilities: independentCandidates }, null, 2)}\n`);
-      await atomicWrite(expansionPath, `${JSON.stringify({ vulnerability_class: vulnClass, input_digest: inputDigest, assessments, independent_candidates: independentCandidates }, null, 2)}\n`);
-      const expansionLines = [`# Template-based expansion review: ${vulnClass}`, '', 'The following independent candidates are included in the final report only when their separate exploitation proof passes the second record replay. Related locations under an existing finding ID only enrich that finding.', '', '## Independently confirmed additional findings', ''];
-      for (const candidate of independentCandidates) expansionLines.push(`- Independent candidate ${String(candidate.ID)}: ${String(candidate.title ?? candidate.vulnerability_type ?? 'Untitled')}`);
+      await atomicWrite(
+        expansionPath,
+        `${JSON.stringify(
+          {
+            vulnerability_class: vulnClass,
+            input_digest: inputDigest,
+            assessments,
+            independent_candidates: independentCandidates,
+            rejected_unbound_candidate_count: unboundIndependentProducers.length - independentProducers.length,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const expansionLines = [
+        `# Template-based expansion review: ${vulnClass}`,
+        '',
+        'The following independent candidates run through a dedicated exploit and record pass. Reporting requires either replay-verified impact or source-confirmed impact validation blocked by a documented external condition. Related locations under an existing finding ID only enrich that finding.',
+        '',
+        '## Independently confirmed additional findings',
+        '',
+      ];
+      for (const candidate of independentCandidates) {
+        const locations = Array.isArray(candidate.code_locations)
+          ? candidate.code_locations.filter(
+              (location): location is Record<string, unknown> =>
+                !!location && typeof location === 'object' && typeof (location as { file?: unknown }).file === 'string',
+            )
+          : [];
+        const renderedLocations = locations.map((location) => {
+          const start = Number.isInteger(location.start_line) ? `:${String(location.start_line)}` : '';
+          const end =
+            Number.isInteger(location.end_line) && location.end_line !== location.start_line
+              ? `-${String(location.end_line)}`
+              : '';
+          const role = typeof location.role === 'string' ? ` (${location.role})` : '';
+          return `${String(location.file)}${start}${end}${role}`;
+        });
+        expansionLines.push(
+          `- Independent candidate ${String(candidate.ID)}: ${String(candidate.title ?? candidate.vulnerability_type ?? 'Untitled')}`,
+          ...(renderedLocations.length > 0 ? [`  - Confirmed source locations: ${renderedLocations.join(', ')}`] : []),
+        );
+      }
       for (const item of assessments) {
         expansionLines.push(`## ${item.finding_id}: ${item.title ?? 'Related code location'}`, '');
-        for (const location of item.confirmed_code_locations as Array<{ file?: string; start_line?: number; end_line?: number }>)
-          expansionLines.push(`- Confirmed related location: ${location.file}${location.start_line ? `:${location.start_line}` : ''}${location.end_line && location.end_line !== location.start_line ? `-${location.end_line}` : ''}`);
+        for (const location of item.confirmed_code_locations as Array<{
+          file?: string;
+          start_line?: number;
+          end_line?: number;
+        }>)
+          expansionLines.push(
+            `- Confirmed related location: ${location.file}${location.start_line ? `:${location.start_line}` : ''}${location.end_line && location.end_line !== location.start_line ? `-${location.end_line}` : ''}`,
+          );
         if (item.assessment) expansionLines.push(`- Analysis: ${String(item.assessment)}`);
         expansionLines.push('');
       }
-      await atomicWrite(path.join(deliverablesPath, `explore_expansion_${vulnClass}.md`), `${expansionLines.join('\n')}\n`);
+      await atomicWrite(
+        path.join(deliverablesPath, `explore_expansion_${vulnClass}.md`),
+        `${expansionLines.join('\n')}\n`,
+      );
       if (originalQueueContents !== undefined) await atomicWrite(queuePath, originalQueueContents);
       if (originalAnalysisContents !== undefined) {
-        await atomicWrite(path.join(deliverablesPath, `${vulnClass}_analysis_deliverable.md`), originalAnalysisContents);
+        await atomicWrite(
+          path.join(deliverablesPath, `${vulnClass}_analysis_deliverable.md`),
+          originalAnalysisContents,
+        );
       }
     }
   };
   let promptAddendum: string | undefined;
   if (input.exploreExpansion) {
-    const promptRoot = input.promptDir ? path.resolve(process.env.SHANNON_WORKER_ROOT ?? process.cwd(), input.promptDir) : PROMPTS_DIR;
-    const instructions = await fs.readFile(path.join(promptRoot, 'explore-expansion.txt'), 'utf8');
-    promptAddendum = `${instructions}\n\n${JSON.stringify({ targets: expansionTargets }, null, 2)}\n</explore_expansion_pass>`;
+    const instructions = await loadPromptFragment(
+      'explore-expansion',
+      input.pipelineTestingMode ?? false,
+      createActivityLogger(),
+      input.promptDir,
+    );
+    promptAddendum = `${instructions}\n\n${JSON.stringify({ targets: expansionTargets }, null, 2)}\n</template_expansion_pass>`;
   }
   try {
-    return await runAgentActivity(agentName, input, collector.tools, writeDeliverable, 'terminal', !input.exploreExpansion, promptAddendum);
+    const auditAgentName = input.exploreExpansion
+      ? (`${vulnClass}-vuln-expansion` as PostExploitationStage)
+      : undefined;
+    return await runAgentActivity(
+      agentName,
+      input,
+      collector.tools,
+      writeDeliverable,
+      'terminal',
+      !input.exploreExpansion,
+      promptAddendum,
+      auditAgentName,
+    );
   } finally {
     if (input.exploreExpansion) {
       const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
-      if (originalQueueContents !== undefined) await atomicWrite(path.join(dir, `${vulnClass}_exploitation_queue.json`), originalQueueContents);
-      if (originalAnalysisContents !== undefined) await atomicWrite(path.join(dir, `${vulnClass}_analysis_deliverable.md`), originalAnalysisContents);
+      if (originalQueueContents !== undefined)
+        await atomicWrite(path.join(dir, `${vulnClass}_exploitation_queue.json`), originalQueueContents);
+      if (originalAnalysisContents !== undefined)
+        await atomicWrite(path.join(dir, `${vulnClass}_analysis_deliverable.md`), originalAnalysisContents);
     }
   }
 }
@@ -794,8 +963,20 @@ async function runExploitAgentWithCollector(
     try {
       const parsed = JSON.parse(await fs.readFile(candidateQueuePath, 'utf8')) as { vulnerabilities?: unknown };
       candidateCount = Array.isArray(parsed.vulnerabilities) ? parsed.vulnerabilities.length : 0;
-    } catch { /* no discovered candidates for this class */ }
-    if (candidateCount === 0) return { durationMs: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, numTurns: 0, skipped: true };
+    } catch {
+      /* no discovered candidates for this class */
+    }
+    if (candidateCount === 0)
+      return {
+        durationMs: 0,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+        costUsd: 0,
+        numTurns: 0,
+        skipped: true,
+      };
     originalQueue = await fs.readFile(queuePath, 'utf8');
     const candidates = await fs.readFile(candidateQueuePath, 'utf8');
     await atomicWrite(queuePath, candidates);
@@ -819,26 +1000,50 @@ async function runExploitAgentWithCollector(
       missing: missingIds.length,
     });
 
-    const collectorRelPath = expansion ? `explore_expansion_${vulnClass}_exploit_collector.json` : sparseExploitCollectorPath(vulnClass);
+    const collectorRelPath = expansion
+      ? `explore_expansion_${vulnClass}_exploit_collector.json`
+      : sparseExploitCollectorPath(vulnClass);
     await atomicWrite(path.join(deliverablesPath, collectorRelPath), `${JSON.stringify(collected, null, 2)}\n`);
     logger.info(`Wrote ${collectorRelPath} with ${collected.length} collector entries`);
 
     const markdown = renderExploitDeliverable(vulnClass, collected, idToType);
-    const mdPath = path.join(deliverablesPath, expansion ? `explore_expansion_${vulnClass}_exploitation_evidence.md` : `${vulnClass}_exploitation_evidence.md`);
+    const mdPath = path.join(
+      deliverablesPath,
+      expansion ? `explore_expansion_${vulnClass}_exploitation_evidence.md` : `${vulnClass}_exploitation_evidence.md`,
+    );
     await atomicWrite(mdPath, markdown);
-    logger.info(`Wrote ${expansion ? `explore_expansion_${vulnClass}_exploitation_evidence.md` : `${vulnClass}_exploitation_evidence.md`} from structured data (${markdown.length} bytes)`);
+    logger.info(
+      `Wrote ${expansion ? `explore_expansion_${vulnClass}_exploitation_evidence.md` : `${vulnClass}_exploitation_evidence.md`} from structured data (${markdown.length} bytes)`,
+    );
     if (expansion) {
       const expansionReportPath = path.join(deliverablesPath, `explore_expansion_${vulnClass}.md`);
-      const prior = await fs.readFile(expansionReportPath, 'utf8').catch(() => `# Template-based expansion review: ${vulnClass}\n`);
+      const prior = await fs
+        .readFile(expansionReportPath, 'utf8')
+        .catch(() => `# Template-based expansion review: ${vulnClass}\n`);
       await atomicWrite(expansionReportPath, `${prior}\n## Exploitation of additional findings\n\n${markdown}\n`);
     }
     if (originalQueue !== undefined) await atomicWrite(queuePath, originalQueue);
   };
   try {
     const extra = expansion
-      ? `\n\n<template_expansion_exploitation>These are newly analyzed findings discovered from source matches of confirmed vulnerability templates. Exploit only entries in the current queue, independently verify impact against the configured target, and record proof using the standard exploit tool. Do not modify the original findings. </template_expansion_exploitation>`
+      ? await loadPromptFragment(
+          'explore-expansion-exploit',
+          input.pipelineTestingMode ?? false,
+          createActivityLogger(),
+          input.promptDir,
+        )
       : undefined;
-    return await runAgentActivity(agentName, input, collector.tools, writeDeliverable, 'terminal', !expansion, extra);
+    const auditAgentName = expansion ? (`${vulnClass}-exploit-expansion` as PostExploitationStage) : undefined;
+    return await runAgentActivity(
+      agentName,
+      input,
+      collector.tools,
+      writeDeliverable,
+      'terminal',
+      !expansion,
+      extra,
+      auditAgentName,
+    );
   } finally {
     if (originalQueue !== undefined) await atomicWrite(queuePath, originalQueue);
   }
@@ -876,9 +1081,12 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   const validIds = new Set<string>();
   for (const vulnerabilityClass of classes) {
-    const queueFile = path.join(dir, input.exploreExpansion
-      ? `explore_candidates_${vulnerabilityClass}.json`
-      : `${vulnerabilityClass}_exploitation_queue.json`);
+    const queueFile = path.join(
+      dir,
+      input.exploreExpansion
+        ? `explore_candidates_${vulnerabilityClass}.json`
+        : `${vulnerabilityClass}_exploitation_queue.json`,
+    );
     try {
       const queue = JSON.parse(await fs.readFile(queueFile, 'utf8')) as { vulnerabilities?: Array<{ ID?: unknown }> };
       for (const vulnerability of queue.vulnerabilities ?? [])
@@ -900,7 +1108,8 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
   });
   const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
     const { renderExploitDeliverable } = await import('../services/exploit-renderer.js');
-    const redact = (value: string) => captureRedactions.reduce((text, item) => text.split(item.value).join(item.placeholder), value);
+    const redact = (value: string) =>
+      captureRedactions.reduce((text, item) => text.split(item.value).join(item.placeholder), value);
     const verdicts = collector.getAll().map((verdict) => ({
       ...verdict,
       reason: redact(verdict.reason),
@@ -912,15 +1121,23 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
     const pending: typeof verdicts = [];
     const verifiedFindingIds = new Set<string>();
     for (const vulnerabilityClass of classes) {
-      const sourceCollectorPath = path.join(deliverablesPath, input.exploreExpansion
-        ? `explore_expansion_${vulnerabilityClass}_exploit_collector.json`
-        : `${vulnerabilityClass}_exploit_collector.json`);
+      const sourceCollectorPath = path.join(
+        deliverablesPath,
+        input.exploreExpansion
+          ? `explore_expansion_${vulnerabilityClass}_exploit_collector.json`
+          : `${vulnerabilityClass}_exploit_collector.json`,
+      );
       const renumberedCollectorPath = input.exploreExpansion
         ? sourceCollectorPath
         : path.join(deliverablesPath, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
       let sourceEntries: Array<Record<string, unknown> & { vulnerability_id?: string; status?: string }>;
-      try { sourceEntries = JSON.parse(await fs.readFile(sourceCollectorPath, 'utf8')) as Array<Record<string, unknown> & { vulnerability_id?: string; status?: string }>; }
-      catch { continue; }
+      try {
+        sourceEntries = JSON.parse(await fs.readFile(sourceCollectorPath, 'utf8')) as Array<
+          Record<string, unknown> & { vulnerability_id?: string; status?: string }
+        >;
+      } catch {
+        continue;
+      }
       for (const entry of sourceEntries) {
         if (entry.status !== 'exploited' || !entry.vulnerability_id || byId.has(entry.vulnerability_id)) continue;
         const unresolved = {
@@ -950,7 +1167,8 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           entry.http_evidence_receipts = [];
           entry.http_evidence_display = 'omit';
           entry.verification_method = 'other';
-          entry.http_evidence_reason = verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
+          entry.http_evidence_reason =
+            verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
         }
       }
       await atomicWrite(sourceCollectorPath, `${JSON.stringify(sourceEntries, null, 2)}\n`);
@@ -959,9 +1177,15 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
       let finalIdToSourceId = new Map<string, string>();
       try {
         entries = JSON.parse(await fs.readFile(renumberedCollectorPath, 'utf8')) as typeof sourceEntries;
-        const renumberMap = JSON.parse(await fs.readFile(path.join(deliverablesPath, `${vulnerabilityClass}_renumber_map.json`), 'utf8')) as { map?: Record<string, string> };
-        finalIdToSourceId = new Map(Object.entries(renumberMap.map ?? {}).map(([sourceId, finalId]) => [finalId, sourceId]));
-      } catch { /* no renumbered artifact for an empty or absent class */ }
+        const renumberMap = JSON.parse(
+          await fs.readFile(path.join(deliverablesPath, `${vulnerabilityClass}_renumber_map.json`), 'utf8'),
+        ) as { map?: Record<string, string> };
+        finalIdToSourceId = new Map(
+          Object.entries(renumberMap.map ?? {}).map(([sourceId, finalId]) => [finalId, sourceId]),
+        );
+      } catch {
+        /* no renumbered artifact for an empty or absent class */
+      }
       for (const entry of entries) {
         if (!entry.vulnerability_id) continue;
         const sourceId = finalIdToSourceId.get(entry.vulnerability_id) ?? entry.vulnerability_id;
@@ -977,12 +1201,17 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           entry.http_evidence_receipts = [];
           entry.http_evidence_display = 'omit';
           entry.verification_method = 'other';
-          entry.http_evidence_reason = verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
+          entry.http_evidence_reason =
+            verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
         }
       }
-      if (entries !== sourceEntries) await atomicWrite(renumberedCollectorPath, `${JSON.stringify(entries, null, 2)}\n`);
-      const filtered = entries.filter((entry) =>
-        entry.status !== 'exploited' || (!!entry.vulnerability_id && byId.get(finalIdToSourceId.get(entry.vulnerability_id) ?? entry.vulnerability_id)?.status === 'verified'),
+      if (entries !== sourceEntries)
+        await atomicWrite(renumberedCollectorPath, `${JSON.stringify(entries, null, 2)}\n`);
+      const filtered = entries.filter(
+        (entry) =>
+          entry.status !== 'exploited' ||
+          (!!entry.vulnerability_id &&
+            byId.get(finalIdToSourceId.get(entry.vulnerability_id) ?? entry.vulnerability_id)?.status === 'verified'),
       );
       for (const entry of filtered) {
         // A blocked exploit is still a source-confirmed finding. Replay gates only findings
@@ -990,67 +1219,97 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         if ((entry.status === 'blocked' || entry.status === 'exploited') && entry.vulnerability_id)
           verifiedFindingIds.add(entry.vulnerability_id);
       }
-      const queuePath = path.join(deliverablesPath, input.exploreExpansion
-        ? `explore_candidates_${vulnerabilityClass}.json`
-        : `${vulnerabilityClass}_exploitation_queue.json`);
+      const queuePath = path.join(
+        deliverablesPath,
+        input.exploreExpansion
+          ? `explore_candidates_${vulnerabilityClass}.json`
+          : `${vulnerabilityClass}_exploitation_queue.json`,
+      );
       let idToType = new Map<string, string>();
-      try { idToType = (await readExploitQueue(queuePath)).idToType; } catch { /* render with stable IDs only */ }
+      try {
+        idToType = (await readExploitQueue(queuePath)).idToType;
+      } catch {
+        /* render with stable IDs only */
+      }
       let recordedMarkdown = renderExploitDeliverable(
         vulnerabilityClass,
         filtered as import('../collectors/exploit-collector.js').AddExploitInput[],
         idToType,
       );
-      const replayed = verdicts.filter((verdict) =>
-        filtered.some((entry) => (finalIdToSourceId.get(entry.vulnerability_id ?? '') ?? entry.vulnerability_id) === verdict.finding_id) && verdict.status === 'verified',
+      const replayed = verdicts.filter(
+        (verdict) =>
+          filtered.some(
+            (entry) =>
+              (finalIdToSourceId.get(entry.vulnerability_id ?? '') ?? entry.vulnerability_id) === verdict.finding_id,
+          ) && verdict.status === 'verified',
       );
       if (replayed.length) {
         recordedMarkdown += `\n\n## Record-stage replay and frontend reproduction\n\n${replayed
           .map((verdict) => {
-            const frontend = verdict.frontend_status === 'available'
-              ? `Frontend URL: ${verdict.frontend_url}\n\nFrontend trigger: ${verdict.frontend_trigger}`
-              : `Frontend status: ${verdict.frontend_status} — ${verdict.frontend_reason}`;
+            const frontend =
+              verdict.frontend_status === 'available'
+                ? `Frontend URL: ${verdict.frontend_url}\n\nFrontend trigger: ${verdict.frontend_trigger}`
+                : `Frontend status: ${verdict.frontend_status} — ${verdict.frontend_reason}`;
             return `- ${verdict.finding_id}: packet captures ${verdict.capture_ids.join(', ')}; ${verdict.reason}\n\n  ${frontend}`;
           })
           .join('\n')}\n`;
       }
       await atomicWrite(
-        path.join(deliverablesPath, input.exploreExpansion
-          ? `explore_expansion_${vulnerabilityClass}_recorded_exploitation_evidence.md`
-          : `${vulnerabilityClass}_recorded_exploitation_evidence.md`),
+        path.join(
+          deliverablesPath,
+          input.exploreExpansion
+            ? `explore_expansion_${vulnerabilityClass}_recorded_exploitation_evidence.md`
+            : `${vulnerabilityClass}_recorded_exploitation_evidence.md`,
+        ),
         recordedMarkdown,
       );
       if (input.exploreExpansion && filtered.length) {
         const expansionReportPath = path.join(deliverablesPath, `explore_expansion_${vulnerabilityClass}.md`);
         const previous = await fs.readFile(expansionReportPath, 'utf8').catch(() => '');
-        await atomicWrite(expansionReportPath, `${previous}\n## Replay verification of additional findings\n\n${recordedMarkdown}\n`);
+        await atomicWrite(
+          expansionReportPath,
+          `${previous}\n## Replay verification of additional findings\n\n${recordedMarkdown}\n`,
+        );
       }
       for (const entry of sourceEntries) {
         if (entry.status !== 'exploited' || !entry.vulnerability_id) continue;
         const verdict = byId.get(entry.vulnerability_id);
         if (!verdict || verdict.status !== 'verified') {
-          pending.push(verdict ?? {
-            finding_id: entry.vulnerability_id,
-            status: 'manual_review' as const,
-            reason: 'No replay verdict was recorded.',
-            capture_ids: [],
-            frontend_status: 'unable_to_determine' as const,
-            frontend_url: null,
-            frontend_trigger: null,
-            frontend_reason: 'The record agent did not establish the frontend entry point.',
-          });
+          pending.push(
+            verdict ?? {
+              finding_id: entry.vulnerability_id,
+              status: 'manual_review' as const,
+              reason: 'No replay verdict was recorded.',
+              capture_ids: [],
+              frontend_status: 'unable_to_determine' as const,
+              frontend_url: null,
+              frontend_trigger: null,
+              frontend_reason: 'The record agent did not establish the frontend entry point.',
+            },
+          );
         }
       }
     }
     let allVerdicts = verdicts;
     let allVerifiedFindingIds = verifiedFindingIds;
     if (input.exploreExpansion) {
-      const previousVerdicts = JSON.parse(await fs.readFile(path.join(deliverablesPath, 'record_verification.json'), 'utf8')) as typeof verdicts;
-      const previousIds = JSON.parse(await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8')) as string[];
+      const previousVerdicts = JSON.parse(
+        await fs.readFile(path.join(deliverablesPath, 'record_verification.json'), 'utf8'),
+      ) as typeof verdicts;
+      const previousIds = JSON.parse(
+        await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8'),
+      ) as string[];
       allVerdicts = [...previousVerdicts, ...verdicts];
       allVerifiedFindingIds = new Set([...previousIds, ...verifiedFindingIds]);
     }
-    await atomicWrite(path.join(deliverablesPath, 'record_verification.json'), `${JSON.stringify(allVerdicts, null, 2)}\n`);
-    await atomicWrite(path.join(deliverablesPath, 'record_verified_finding_ids.json'), `${JSON.stringify([...allVerifiedFindingIds].sort(), null, 2)}\n`);
+    await atomicWrite(
+      path.join(deliverablesPath, 'record_verification.json'),
+      `${JSON.stringify(allVerdicts, null, 2)}\n`,
+    );
+    await atomicWrite(
+      path.join(deliverablesPath, 'record_verified_finding_ids.json'),
+      `${JSON.stringify([...allVerifiedFindingIds].sort(), null, 2)}\n`,
+    );
     const lines = [
       '# Record and Replay Results',
       '',
@@ -1062,24 +1321,48 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
       ]),
     ];
     await atomicWrite(path.join(deliverablesPath, 'record_verification.md'), `${lines.join('\n')}\n`);
-    const pendingLines = ['# Pending Manual Verification', '', 'The following exploitation findings could not be replay-verified and are omitted from the final report.', ''];
+    const pendingLines = [
+      '# Pending Manual Verification',
+      '',
+      'The following exploitation findings could not be replay-verified and are omitted from the final report.',
+      '',
+    ];
     for (const item of pending) {
       pendingLines.push(`- **${item.finding_id}**: ${item.reason}`);
-      pendingLines.push(item.frontend_status === 'available'
-        ? `  Frontend: ${item.frontend_url} — ${item.frontend_trigger}`
-        : `  Frontend: ${item.frontend_status} — ${item.frontend_reason}`);
+      pendingLines.push(
+        item.frontend_status === 'available'
+          ? `  Frontend: ${item.frontend_url} — ${item.frontend_trigger}`
+          : `  Frontend: ${item.frontend_status} — ${item.frontend_reason}`,
+      );
     }
     if (!pending.length) pendingLines.push('No findings are pending manual verification.');
     if (input.exploreExpansion) {
-      const originalPending = await fs.readFile(path.join(deliverablesPath, 'pending_manual_verification.md'), 'utf8').catch(() => '');
-      if (originalPending) pendingLines.splice(0, 3, originalPending.trimEnd(), '', '## Expansion findings pending replay');
+      const originalPending = await fs
+        .readFile(path.join(deliverablesPath, 'pending_manual_verification.md'), 'utf8')
+        .catch(() => '');
+      if (originalPending)
+        pendingLines.splice(0, 3, originalPending.trimEnd(), '', '## Expansion findings pending replay');
     }
     await atomicWrite(path.join(deliverablesPath, 'pending_manual_verification.md'), `${pendingLines.join('\n')}\n`);
   };
   const expansionInstructions = input.exploreExpansion
-    ? '\n\n<template_expansion_record_pass>Replay only findings in explore_expansion_*_exploit_collector.json using their documented proof. Use explore_candidates_*.json for valid IDs. Record every expanded exploited finding; do not replay findings from the original exploitation collector.</template_expansion_record_pass>'
+    ? await loadPromptFragment(
+        'explore-expansion-record',
+        input.pipelineTestingMode ?? false,
+        createActivityLogger(),
+        input.promptDir,
+      )
     : undefined;
-  return runAgentActivity('record', input, collector.tools, writeDeliverable, 'terminal', true, expansionInstructions);
+  return runAgentActivity(
+    'record',
+    input,
+    collector.tools,
+    writeDeliverable,
+    'terminal',
+    true,
+    expansionInstructions,
+    input.exploreExpansion ? 'record-expansion' : undefined,
+  );
 }
 
 /** Extract sink templates with an agent, then search the assessed source tree with deterministic ripgrep. */
@@ -1088,17 +1371,31 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
   const { searchExploreTemplates } = await import('../services/explore-search.js');
   const classes: ReconciliationClass[] = ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous'];
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
-  const verifiedIdsRaw = JSON.parse(await fs.readFile(path.join(dir, 'record_verified_finding_ids.json'), 'utf8')) as unknown;
+  const verifiedIdsRaw = JSON.parse(
+    await fs.readFile(path.join(dir, 'record_verified_finding_ids.json'), 'utf8'),
+  ) as unknown;
   if (!Array.isArray(verifiedIdsRaw) || verifiedIdsRaw.some((id) => typeof id !== 'string'))
-    throw ApplicationFailure.nonRetryable('Record verification IDs are invalid; Explore cannot establish trusted sinks.', 'RecordVerificationError');
+    throw ApplicationFailure.nonRetryable(
+      'Record verification IDs are invalid; Explore cannot establish trusted sinks.',
+      'RecordVerificationError',
+    );
   const verifiedIds = new Set(verifiedIdsRaw as string[]);
   const sinks = new Map<string, { vulnerabilityClass: string; locations: Map<string, Set<number>> }>();
   for (const vulnerabilityClass of classes) {
     const collectorPath = path.join(dir, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
     let entries: Array<{ vulnerability_id?: unknown; status?: unknown; code_locations?: unknown }>;
-    try { entries = JSON.parse(await fs.readFile(collectorPath, 'utf8')) as typeof entries; } catch { continue; }
+    try {
+      entries = JSON.parse(await fs.readFile(collectorPath, 'utf8')) as typeof entries;
+    } catch {
+      continue;
+    }
     for (const entry of entries) {
-      if (entry.status !== 'exploited' || typeof entry.vulnerability_id !== 'string' || !verifiedIds.has(entry.vulnerability_id)) continue;
+      if (
+        entry.status !== 'exploited' ||
+        typeof entry.vulnerability_id !== 'string' ||
+        !verifiedIds.has(entry.vulnerability_id)
+      )
+        continue;
       const locations = new Map<string, Set<number>>();
       for (const location of Array.isArray(entry.code_locations) ? entry.code_locations : []) {
         if (!location || typeof location !== 'object') continue;
@@ -1116,11 +1413,25 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
     const templates = collector.getAll();
     const search = await searchExploreTemplates(input.repoPath, templates);
     await atomicWrite(path.join(deliverablesPath, 'explore_templates.json'), `${JSON.stringify(templates, null, 2)}\n`);
-    await atomicWrite(path.join(deliverablesPath, 'explore_search_results.json'), `${JSON.stringify(search, null, 2)}\n`);
-    const lines = ['# Template-based Source Exploration', '', 'Templates are model-derived from record-verified sink locations. All repository search results below were generated deterministically by ripgrep.', ''];
-    for (const template of templates) lines.push(`- ${template.finding_id} (${template.vulnerability_class}) — ${template.sink_file}:${template.sink_line} — \`${template.regex}\` — ${template.rationale}`);
+    await atomicWrite(
+      path.join(deliverablesPath, 'explore_search_results.json'),
+      `${JSON.stringify(search, null, 2)}\n`,
+    );
+    const lines = [
+      '# Template-based Source Exploration',
+      '',
+      'Templates are model-derived from record-verified sink locations. All repository search results below were generated deterministically by ripgrep.',
+      '',
+    ];
+    for (const template of templates)
+      lines.push(
+        `- ${template.finding_id} (${template.vulnerability_class}) — ${template.sink_file}:${template.sink_line} — \`${template.regex}\` — ${template.rationale}`,
+      );
     lines.push('', '## Matching Source Locations', '');
-    for (const match of search.matches) lines.push(`- ${match.finding_id}: ${match.match_file}:${match.match_line} — \`${match.excerpt.replace(/`/g, '\\`')}\``);
+    for (const match of search.matches)
+      lines.push(
+        `- ${match.finding_id}: ${match.match_file}:${match.match_line} — \`${match.excerpt.replace(/`/g, '\\`')}\``,
+      );
     if (!search.matches.length) lines.push('No additional source locations matched the submitted templates.');
     if (search.truncated) lines.push('', 'Search results were truncated; additional matches may exist.');
     if (search.rejected.length) {
@@ -1130,6 +1441,62 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
     await atomicWrite(path.join(deliverablesPath, 'explore_deliverable.md'), `${lines.join('\n')}\n`);
   };
   return runAgentActivity('explore', input, collector.tools, writeDeliverable);
+}
+
+/** Execute one report-preparation stage behind the durable post-exploitation checkpoint. */
+export async function runPostExploitationStage(
+  input: ActivityInput,
+  stage: PostExploitationStage,
+): Promise<AgentMetrics> {
+  const auditSession = new AuditSession(buildSessionMetadata(input));
+  await auditSession.initialize(input.workflowId);
+  const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+  const run = async (): Promise<AgentMetrics> => {
+    switch (stage) {
+      case 'record':
+        return runRecordAgent(input);
+      case 'explore':
+        return runExploreAgent(input);
+      case 'injection-vuln-expansion':
+        return runInjectionVulnExpansionAgent(input);
+      case 'xss-vuln-expansion':
+        return runXssVulnExpansionAgent(input);
+      case 'auth-vuln-expansion':
+        return runAuthVulnExpansionAgent(input);
+      case 'authz-vuln-expansion':
+        return runAuthzVulnExpansionAgent(input);
+      case 'ssrf-vuln-expansion':
+        return runSsrfVulnExpansionAgent(input);
+      case 'injection-exploit-expansion':
+        return runInjectionExploitAgent({ ...input, exploreExpansion: true });
+      case 'xss-exploit-expansion':
+        return runXssExploitAgent({ ...input, exploreExpansion: true });
+      case 'auth-exploit-expansion':
+        return runAuthExploitAgent({ ...input, exploreExpansion: true });
+      case 'authz-exploit-expansion':
+        return runAuthzExploitAgent({ ...input, exploreExpansion: true });
+      case 'ssrf-exploit-expansion':
+        return runSsrfExploitAgent({ ...input, exploreExpansion: true });
+      case 'record-expansion':
+        return runRecordAgent({ ...input, exploreExpansion: true });
+    }
+    const exhaustiveStage: never = stage;
+    void exhaustiveStage;
+    throw new RunStateError('CorruptedSessionError', 'post-exploitation-stage-invalid');
+  };
+  try {
+    return await runPostExploitationPass(auditSession, dir, stage, createActivityLogger(), run);
+  } catch (error) {
+    if (error instanceof PostExploitationReplayRequiredError) {
+      throw ApplicationFailure.nonRetryable(
+        'A target-affecting post-exploitation step was interrupted without a durable completion record. Review the target before resuming this workspace.',
+        'PostExploitationReplayRequiredError',
+        [{ stage: error.stage }],
+      );
+    }
+    if (error instanceof RunStateError) throw runStateFailure(error);
+    throw error;
+  }
 }
 
 export async function runReportAgent(input: ActivityInput, exploit: boolean): Promise<AgentMetrics> {
@@ -1175,7 +1542,9 @@ export async function runReportAgent(input: ActivityInput, exploit: boolean): Pr
   let verifiedFindingIds: ReadonlySet<string> | undefined;
   if (exploit) {
     try {
-      const ids = JSON.parse(await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8')) as unknown;
+      const ids = JSON.parse(
+        await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8'),
+      ) as unknown;
       if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new Error('invalid finding allowlist');
       verifiedFindingIds = new Set(ids as string[]);
     } catch {
@@ -2104,6 +2473,16 @@ export async function loadResumeState(
   const checkpoints = completedAgents
     .map((name) => agents[name]?.checkpoint)
     .filter((hash): hash is string => hash != null);
+  for (const [stage, progress] of Object.entries(durableState.post_exploitation ?? {})) {
+    if (progress?.status !== 'completed') continue;
+    try {
+      await validatePostExploitationCheckpoint(deliverablesPath, stage as PostExploitationStage, progress);
+    } catch (error) {
+      if (error instanceof RunStateError) throw runStateFailure(error);
+      throw error;
+    }
+    checkpoints.push(progress.checkpoint);
+  }
   if (durableState.report?.stage === 'draft') {
     checkpoints.push(durableState.report.model_checkpoint);
     if (durableState.report.canonical_checkpoint !== undefined) {

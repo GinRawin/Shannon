@@ -23,6 +23,7 @@ export const BROWSER_AGENTS: ReadonlySet<string> = new Set([
   'auth-exploit',
   'ssrf-exploit',
   'authz-exploit',
+  'record',
   'validate-authentication',
   'verify-exploit',
 ]);

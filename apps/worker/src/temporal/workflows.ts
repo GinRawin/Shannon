@@ -142,6 +142,13 @@ const vulnAnalysisActs = proxyActivities<
   cancellationType: ActivityCancellationType.TRY_CANCEL,
 });
 
+const postExploitationActs = proxyActivities<Pick<typeof activities, 'runPostExploitationStage'>>({
+  startToCloseTimeout: '5 hours',
+  heartbeatTimeout: '60 minutes',
+  retry: PRODUCTION_RETRY,
+  cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+});
+
 const testActs = proxyActivities<typeof activities>({
   startToCloseTimeout: '30 minutes',
   heartbeatTimeout: '30 minutes',
@@ -403,6 +410,7 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
   const { workflowId } = workflowInfo();
   const a = input.pipelineTestingMode ? testActs : acts;
   const vulnAnalysis = input.pipelineTestingMode ? testActs : vulnAnalysisActs;
+  const postExploitation = input.pipelineTestingMode ? testActs : postExploitationActs;
   const exploit = input.exploit ?? true;
   const sessionId = input.sessionId || input.resumeFromWorkspace || workflowId;
   const stateContext: 'fresh' | 'resume' = input.resumeFromWorkspace ? 'resume' : 'fresh';
@@ -1206,37 +1214,58 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     if (state.reportProgress.stage === 'pending') {
       if (exploit) {
         state.currentAgent = 'record';
-        state.agentMetrics.record = await a.runRecordAgent(activityInput);
+        state.agentMetrics.record = await postExploitation.runPostExploitationStage(activityInput, 'record');
         markCompleted('record');
         if (input.checkpointsEnabled) await a.saveCheckpoint(activityInput, 'record', 'exploitation', state);
         state.currentAgent = 'explore';
-        state.agentMetrics.explore = await a.runExploreAgent(activityInput);
+        state.agentMetrics.explore = await postExploitation.runPostExploitationStage(activityInput, 'explore');
         markCompleted('explore');
         if (input.checkpointsEnabled) await a.saveCheckpoint(activityInput, 'explore', 'exploitation', state);
         state.currentAgent = 'vulnerability-analysis-expansion';
         const expansionResults = await Promise.all([
-          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runInjectionVulnExpansionAgent(activityInput)),
-          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runXssVulnExpansionAgent(activityInput)),
-          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runAuthVulnExpansionAgent(activityInput)),
-          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runAuthzVulnExpansionAgent(activityInput)),
-          scheduleVulnerabilityAnalysis(() => vulnAnalysis.runSsrfVulnExpansionAgent(activityInput)),
+          scheduleVulnerabilityAnalysis(() =>
+            postExploitation.runPostExploitationStage(activityInput, 'injection-vuln-expansion'),
+          ),
+          scheduleVulnerabilityAnalysis(() =>
+            postExploitation.runPostExploitationStage(activityInput, 'xss-vuln-expansion'),
+          ),
+          scheduleVulnerabilityAnalysis(() =>
+            postExploitation.runPostExploitationStage(activityInput, 'auth-vuln-expansion'),
+          ),
+          scheduleVulnerabilityAnalysis(() =>
+            postExploitation.runPostExploitationStage(activityInput, 'authz-vuln-expansion'),
+          ),
+          scheduleVulnerabilityAnalysis(() =>
+            postExploitation.runPostExploitationStage(activityInput, 'ssrf-vuln-expansion'),
+          ),
         ]);
         for (const [index, vulnerabilityClass] of ['injection', 'xss', 'auth', 'authz', 'ssrf'].entries()) {
-          state.agentMetrics[`${vulnerabilityClass}-vuln-expansion`] = expansionResults[index]!;
+          const result = expansionResults[index];
+          if (result === undefined) {
+            throw ApplicationFailure.nonRetryable('A vulnerability expansion result is missing.', 'PipelineStateError');
+          }
+          state.agentMetrics[`${vulnerabilityClass}-vuln-expansion`] = result;
         }
         state.currentAgent = 'exploitation-expansion';
         const expansionExploitResults = await Promise.all([
-          a.runInjectionExploitAgent({ ...activityInput, exploreExpansion: true }),
-          a.runXssExploitAgent({ ...activityInput, exploreExpansion: true }),
-          a.runAuthExploitAgent({ ...activityInput, exploreExpansion: true }),
-          a.runAuthzExploitAgent({ ...activityInput, exploreExpansion: true }),
-          a.runSsrfExploitAgent({ ...activityInput, exploreExpansion: true }),
+          postExploitation.runPostExploitationStage(activityInput, 'injection-exploit-expansion'),
+          postExploitation.runPostExploitationStage(activityInput, 'xss-exploit-expansion'),
+          postExploitation.runPostExploitationStage(activityInput, 'auth-exploit-expansion'),
+          postExploitation.runPostExploitationStage(activityInput, 'authz-exploit-expansion'),
+          postExploitation.runPostExploitationStage(activityInput, 'ssrf-exploit-expansion'),
         ]);
         for (const [index, vulnerabilityClass] of ['injection', 'xss', 'auth', 'authz', 'ssrf'].entries()) {
-          state.agentMetrics[`${vulnerabilityClass}-exploit-expansion`] = expansionExploitResults[index]!;
+          const result = expansionExploitResults[index];
+          if (result === undefined) {
+            throw ApplicationFailure.nonRetryable('An exploit expansion result is missing.', 'PipelineStateError');
+          }
+          state.agentMetrics[`${vulnerabilityClass}-exploit-expansion`] = result;
         }
         state.currentAgent = 'record-expansion';
-        state.agentMetrics['record-expansion'] = await a.runRecordAgent({ ...activityInput, exploreExpansion: true });
+        state.agentMetrics['record-expansion'] = await postExploitation.runPostExploitationStage(
+          activityInput,
+          'record-expansion',
+        );
         state.currentAgent = 'report';
       }
       const assembled = await runOperation('report:assemble', 'Assemble report inputs', () =>

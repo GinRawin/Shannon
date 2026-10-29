@@ -13,7 +13,7 @@
 
 ### Shannon is an autonomous, AI pentester for web applications and APIs.
 
-It analyzes your source code, identifies attack paths, and executes real exploits to prove vulnerabilities before they reach production. **No exploit, no report.**
+It analyzes your source code, identifies attack paths, validates real impact against the running application, and keeps every reported finding behind an evidence gate.
 
 **This repository is Shannon Open Source: the full agent, run locally from your command line.**
 
@@ -175,7 +175,7 @@ For source builds, authenticated scans, provider-specific setup, and platform no
 
 ## Key Capabilities
 
-- **No exploit, no report**: Reports only vulnerabilities confirmed with a reproducible proof of concept, reducing speculative scanner noise.
+- **Evidence gated reporting**: Reports replay-verified exploits and source-confirmed findings whose live impact validation was blocked by documented external conditions, while excluding speculative candidates.
 - **Advanced code analysis**: Maps architecture, trust boundaries, interfaces, data flows, and critical assets before sending credible attack paths to live pentesting agents.
 - **Autonomous execution**: Runs reconnaissance, analysis, exploitation, and reporting from a single command.
 - **Live terminal experience**: Simplifies scan setup and shows agent progress and results without exposing orchestration logs.
@@ -265,8 +265,12 @@ flowchart TD
     REC -- "Reconciled exploitation queue" --> EXP["Exploitation agents"]
     APP["Running application"] --> EXP
 
-    EXP -- "Exploit demonstrated" --> REPORT["Reporting<br/>PDF · Markdown · SARIF"]
-    EXP -- "No exploit demonstrated" --> DROP["Discard"]
+    EXP -- "Exploit demonstrated" --> RECORD["Record replay + packet capture"]
+    EXP -- "Blocked by external condition<br/>with source evidence" --> REPORT["Reporting<br/>PDF · Markdown · SARIF"]
+    EXP -- "Unsupported or false positive" --> DROP["Discard"]
+    RECORD -- "Replay verified" --> EXPLORE["Bounded source template expansion"]
+    RECORD -- "Replay inconclusive" --> REVIEW["Manual review"]
+    EXPLORE --> REPORT
 
     REPORT --> CICD["CI/CD gate"]
 ```
@@ -279,10 +283,10 @@ Stage by stage:
 2. **Agentic security code analysis** maps the application's architecture, trust boundaries, exposed interfaces, dependencies, data flows, and high-risk assets, then opens targeted investigations against them.
 3. **Finding reconciliation** merges both streams of candidates, deduplicates the overlap, and groups what remains into an exploitation queue.
 4. **Exploitation agents** attempt real proof-of-concept attacks against the running application.
-5. **Validation** throws out every candidate Shannon can't demonstrate.
+5. **Validation** keeps replay-verified exploits and source-confirmed findings blocked by documented external conditions, and throws out unsupported candidates.
 6. **Reporting** produces PDF and Markdown reports with the evidence attached, plus structured JSON and SARIF for downstream systems.
 
-Only live-validated vulnerabilities become Shannon pentest findings or count toward CI/CD severity gates.
+Only evidence-gated vulnerabilities become Shannon pentest findings. CI/CD severity gates continue to count only findings with `status: exploited`.
 
 Each scan runs in an ephemeral Docker container with an isolated workspace and per-invocation orchestration.
 

@@ -6,4 +6,3 @@ Use the existing vulnerability-class analysis rules and the normal `submit_explo
 For accepted candidates, include enough class-specific analysis in the normal queue fields for the exploit agent to build a proof. The host assigns stable exploitation task IDs and runs a dedicated exploit pass for these candidates. Your normal analysis deliverable is preserved; the host stores this pass's findings in a separate expansion artifact for the final report.
 
 The matches are bounded search results. If they are truncated, assess the supplied matches and state that coverage is partial in your analysis. Do not edit source code or run additional repository searches.
-</template_expansion_pass>

@@ -1,0 +1,3 @@
+<template_expansion_record_pass>
+Replay only findings in explore_expansion_*_exploit_collector.json using their documented proof. Use explore_candidates_*.json for valid IDs. Record every expanded exploited finding; do not replay findings from the original exploitation collector.
+</template_expansion_record_pass>

@@ -1,0 +1,3 @@
+@include(shared/_filesystem.txt)
+
+This is a pipeline wiring test. Do not send HTTP requests. Finish successfully without recording a replay verdict; the host will write the empty Record artifacts.

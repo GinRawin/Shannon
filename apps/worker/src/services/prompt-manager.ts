@@ -488,9 +488,13 @@ async function interpolateVariables(
 // Prompt families that drive deterministic, model-only stages with no browser of their own.
 // They share loadPrompt with the browser agents but must never claim a Playwright session.
 const NON_BROWSER_PROMPT_PREFIXES: readonly string[] = Object.freeze(['task-formation-', 'sast-enrichment-']);
+const NON_BROWSER_PROMPT_NAMES: ReadonlySet<string> = new Set(['explore']);
 
 function isNonBrowserPrompt(promptName: string): boolean {
-  return NON_BROWSER_PROMPT_PREFIXES.some((prefix) => promptName.startsWith(prefix));
+  return (
+    NON_BROWSER_PROMPT_NAMES.has(promptName) ||
+    NON_BROWSER_PROMPT_PREFIXES.some((prefix) => promptName.startsWith(prefix))
+  );
 }
 
 // Resolve promptDir override against SHANNON_WORKER_ROOT so relative paths
@@ -499,6 +503,28 @@ function resolvePromptDir(promptDir: string | undefined): string {
   if (!promptDir) return PROMPTS_DIR;
   if (path.isAbsolute(promptDir)) return promptDir;
   return path.resolve(process.env.SHANNON_WORKER_ROOT ?? process.cwd(), promptDir);
+}
+
+/** Load a managed prompt fragment without agent variable interpolation. */
+export async function loadPromptFragment(
+  promptName: string,
+  pipelineTestingMode: boolean,
+  logger: ActivityLogger,
+  promptDir?: string,
+): Promise<string> {
+  const basePromptsDir = resolvePromptDir(promptDir);
+  const promptsDir = pipelineTestingMode ? path.join(basePromptsDir, 'pipeline-testing') : basePromptsDir;
+  let promptPath = path.join(promptsDir, `${promptName}.txt`);
+  let includeDir = promptsDir;
+  if (!(await fs.pathExists(promptPath)) && promptDir !== undefined) {
+    includeDir = pipelineTestingMode ? path.join(PROMPTS_DIR, 'pipeline-testing') : PROMPTS_DIR;
+    promptPath = path.join(includeDir, `${promptName}.txt`);
+  }
+  if (!(await fs.pathExists(promptPath))) {
+    throw new PentestError(`Prompt file not found: ${promptPath}`, 'prompt', false, { promptName, promptPath });
+  }
+  if (pipelineTestingMode) logger.info(`Using pipeline testing prompt fragment: ${promptPath}`);
+  return processIncludes(await fs.readFile(promptPath, 'utf8'), includeDir);
 }
 
 // Pure function: Load and interpolate prompt template

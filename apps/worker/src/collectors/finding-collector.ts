@@ -133,7 +133,7 @@ const SASTSourceLocationSchema = Type.Object({
  */
 function identityFields(exploit: boolean) {
   const severityDescription = exploit
-    ? 'Severity of the finding, based on the impact the exploit demonstrated.'
+    ? 'Severity based on demonstrated impact for an exploited finding, or assessed from the source-backed potential impact when status is blocked_by_constraints.'
     : 'Severity of the finding, assessed from the vulnerability class and the impact it would have.';
 
   return {
@@ -177,7 +177,7 @@ function locationFields() {
 /** `impact` is described per mode: an analysis run demonstrated nothing, and implying otherwise invites fabrication. */
 function narrativeFields(exploit: boolean) {
   const impactDescription = exploit
-    ? 'What the exploit demonstrably achieved.'
+    ? 'What the exploit demonstrably achieved, or the explicitly qualified potential impact for a source-confirmed finding blocked by an external constraint.'
     : 'What an attacker could achieve if this were exploited. State it as assessed, not demonstrated.';
 
   return {
@@ -210,7 +210,14 @@ function exploitOnlyFields() {
     }),
     status: Type.Optional(
       Type.Union([stringEnum(STATUS_VALUES), Type.Null()], {
-        description: 'Finding status. Use "exploited" for confirmed exploits.',
+        description:
+          'Use "exploited" for a replay-verified exploit and "blocked_by_constraints" only for a source-confirmed finding whose live validation hit a documented external constraint.',
+      }),
+    ),
+    confidence: Type.Optional(
+      Type.Union([stringEnum(CONFIDENCE_VALUES), Type.Null()], {
+        description:
+          'Required by the report instructions for blocked_by_constraints findings; copy the exploit evidence confidence without reassessing it.',
       }),
     ),
   };
@@ -327,7 +334,7 @@ export function createFindingCollector(exploit: boolean, allowedFindingIds?: Rea
     async execute(_toolCallId, input) {
       if (exploit && allowedFindingIds && !allowedFindingIds.has(input.finding_id)) {
         return errorResult(
-          `Finding ${input.finding_id} was not replay-verified by the record stage and cannot enter the final report.`,
+          `Finding ${input.finding_id} was not admitted by the record-stage evidence gate and cannot enter the final report.`,
           'UnverifiedFindingError',
           false,
         );

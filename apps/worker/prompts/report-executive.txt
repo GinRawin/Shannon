@@ -70,13 +70,17 @@ Exploitation: {{EXPLOITATION}}
 Read through the concatenated report and identify which vulnerability entries to record. Apply these rules:
 
 ### KEEP — these are real findings to record via `add_finding`
-- Vulnerability entries under `## {{REPORT_VULN_SUBHEADING}}` sections with IDs matching `### [TYPE]-[NUMBER]`
+<exploit_mode_keep>
+- Vulnerability entries under `## Successfully Exploited Vulnerabilities` with IDs matching `### [TYPE]-[NUMBER]` when the assembled input includes their verified Record verdict.
+- Vulnerability entries under `## Potential Vulnerabilities (Validation Blocked)` with IDs matching `### [TYPE]-[NUMBER]` only when they document a source-confirmed flaw and a concrete external operational blocker. These are reported as `blocked_by_constraints`, never as demonstrated exploitation.
+</exploit_mode_keep>
+<analysis_mode_keep>
+- Vulnerability entries under `## Identified Vulnerabilities` sections with IDs matching `### [TYPE]-[NUMBER]`.
+</analysis_mode_keep>
 {{REPORT_FILTER_RULES}}
 
 ### SKIP — do not record these
-<exploit_mode_skip>
-- `## Potential Vulnerabilities (Validation Blocked)` entries
-</exploit_mode_skip>
+- Blocked entries whose stated blocker is a security control, lack of evidence, model/tool failure, or an unconfirmed hypothesis rather than an external operational constraint
 - Standalone "Recommendations", "Conclusion", "Summary", "Next Steps", "Additional Analysis" sections
 - False positives sections
 - Introductory text, vulnerability counts, or meta-commentary without vulnerability IDs
@@ -115,7 +119,7 @@ Fields:
 - `assessment_date`: `{{ASSESSMENT_DATE}}`. Copy this value exactly.
 - `scope`: `{{VULN_CLASSES_TESTED}}`
 <exploit_mode_summary>
-- `executive_summary`: 2-3 sentences summarizing the security posture for technical leadership (CTOs, CISOs, Engineering VPs). Must include the target URL and copy the assessment date `{{ASSESSMENT_DATE}}` exactly. Provide a high-level characterization based on the findings — severity distribution, most critical issues, and overall risk demonstrated by exploitation. If no vulnerabilities were confirmed in the assessed classes, state that scope clearly. A clean report is valid only when no <not_assessed_classes> block is present. If that block is present, explicitly say the listed classes were not assessed and do not assert they are free of vulnerabilities.
+- `executive_summary`: 2-3 sentences summarizing the security posture for technical leadership (CTOs, CISOs, Engineering VPs). Must include the target URL and copy the assessment date `{{ASSESSMENT_DATE}}` exactly. Provide a high-level characterization based on the findings — severity distribution, the most critical replay-verified issues, and any source-confirmed issues whose live validation was externally blocked. Distinguish demonstrated impact from assessed potential impact. If no findings passed either evidence gate in the assessed classes, state that scope clearly. A clean report is valid only when no <not_assessed_classes> block is present. If that block is present, explicitly say the listed classes were not assessed and do not assert they are free of vulnerabilities.
 </exploit_mode_summary>
 <analysis_mode_summary>
 - `executive_summary`: 2-3 sentences summarizing the security posture for technical leadership (CTOs, CISOs, Engineering VPs). Must include the target URL and copy the assessment date `{{ASSESSMENT_DATE}}` exactly. Provide a high-level characterization based on the findings — severity and confidence distribution, the most serious weaknesses identified, and overall risk. State plainly that this was an analysis-only assessment and that no finding was confirmed by exploitation; do not describe risk as demonstrated or proven, and present severity as assessed rather than measured. If no vulnerabilities were identified in the assessed classes, state that scope clearly. A clean report is valid only when no <not_assessed_classes> block is present. If that block is present, explicitly say the listed classes were not assessed and do not assert they are free of vulnerabilities.
@@ -148,7 +152,8 @@ Map the finding's content from the per-class deliverable sections to `add_findin
 - `title`: The cleaned-up title (see title cleanup rules in <filter_and_clean>)
 - `category`: Derived from the finding type prefix — `INJ` → `"Injection"`, `XSS` → `"XSS"`, `AUTH` → `"Authentication"`, `AUTHZ` → `"Authorization"`, `SSRF` → `"SSRF"`, `MISC` → `"Miscellaneous"`
 <exploit_mode_fields>
-- `severity`: From the finding's "Severity" field. Use as-is; do not reassess.
+- `severity`: For an exploited finding, copy the finding's "Severity" unchanged. For `blocked_by_constraints`, assess severity from the explicitly stated potential impact and make clear in `impact` that it was not demonstrated.
+- `confidence`: For `blocked_by_constraints`, copy the finding's "Confidence" unchanged. Omit it for exploited findings.
 </exploit_mode_fields>
 <analysis_mode_fields>
 - `confidence`: From the finding's "Confidence" field. Use as-is; do not reassess.
@@ -170,13 +175,13 @@ Map the finding's content from the per-class deliverable sections to `add_findin
 - `overview`: Synthesize from the finding's "Overview" field into professional prose. Do not paste verbatim.
 - `remediation`: Specific, actionable fix guidance from the finding. Code-level or configuration-level. Avoid generic advice.
 <exploit_mode_fields>
-- `impact`: From the finding's "Impact" field if present, otherwise derive from the overview and recorded exploitation results.
+- `impact`: For an exploited finding, use demonstrated impact. For `blocked_by_constraints`, use the source-backed potential/expected impact and explicitly qualify it as not demonstrated because of the named blocker.
 - `auth_state`: From the finding's authentication context or prerequisites
 - `prerequisites`: From the finding's "Prerequisites" field, or `"None"` if not specified
-- `exploitation_steps`: From the finding's exploitation steps or proof-of-concept. Each step gets a title and ordered prose/code items. Use `"bash"` for shell commands, `"http"` for raw HTTP, `"json"` for response bodies.
+- `exploitation_steps`: For an exploited finding, use the replayed proof-of-concept. For `blocked_by_constraints`, record the attempted validation and the upstream hypothetical steps, beginning with the external condition that would have to be removed. Each step gets a title and ordered prose/code items. Use `"bash"` for shell commands, `"http"` for raw HTTP, `"json"` for response bodies.
 - In exploit mode, the host copies the exploit agent's evidence-display decision. Only selected HTTP captures are attached, and only when that agent chose to include them. Browser/other verification observations are joined from the original exploit collector. Do not override this decision, reconstruct transcripts, or author duplicate HTTP/browser evidence sections in notes or additional_sections.
 - Keep exploitation_steps focused on the actual setup, actions, and expected observations, including browser interactions when required. Ordinary recorded commands enter reproduce.sh without an automatic replay requirement; optional impact assertions are a separate capability. A successful curl transport alone is not proof that a vulnerability was reproduced.
-- `status`: Optional. Use `"exploited"` for confirmed exploits.
+- `status`: Use `"exploited"` for replay-verified exploits and `"blocked_by_constraints"` for admitted source-confirmed findings whose validation was stopped by a documented external operational constraint.
 </exploit_mode_fields>
 <analysis_mode_fields>
 - `impact`: What an attacker could achieve if this vulnerability were exploited. Derive it from the finding's "Impact" and "Overview" fields. Write it as assessed, never as achieved.
@@ -196,7 +201,7 @@ If no valid findings exist after filtering, do not call `add_finding` at all. Th
 <constraints>
 <exploit_mode_constraints>
 - **No Fabrications:** Do not invent exploitation steps, evidence, or impact. Every piece of data must come from the deliverable files. If a finding has incomplete data, include it but note the gap in `overview`.
-- **No Severity Changes:** Use the severity from the deliverable as-is. Do not inflate or deflate.
+- **Rating Integrity:** Copy severity unchanged for exploited findings. For `blocked_by_constraints`, assess severity only from the documented potential impact and copy confidence unchanged. Never present an assessed blocked severity as measured.
 </exploit_mode_constraints>
 <analysis_mode_constraints>
 - **No Fabrications:** Every piece of data must come from the deliverable files. If a finding has incomplete data, include it but note the gap in `overview`.
@@ -217,7 +222,8 @@ Before finalizing, verify:
 - [ ] For each distinct defect in the deliverables, did I call `add_finding` exactly once with the correct `finding_id`, leaving no defect unreported?
 - [ ] Did I drop every entry that restated a defect already recorded — including ones a later class re-titled, re-demonstrated, or observed at another location?
 <exploit_mode_skipcheck>
-- [ ] Did I skip all entries from "Potential Vulnerabilities (Validation Blocked)", false positives, and meta-commentary sections?
+- [ ] Did I include only evidence-gated blocked findings, mark them `blocked_by_constraints`, and avoid describing their potential impact as demonstrated?
+- [ ] Did I skip false positives, unsupported blocked entries, and meta-commentary sections?
 </exploit_mode_skipcheck>
 <analysis_mode_skipcheck>
 - [ ] Did I skip false positives and meta-commentary sections?
@@ -228,7 +234,8 @@ Before finalizing, verify:
 - [ ] Does every finding have `auth_state` and `prerequisites`?
 - [ ] Does every finding have `exploitation_steps` with prose/code items?
 - [ ] Did I leave HTTP evidence attachment to the host without authoring a separate evidence section?
-- [ ] Are severity ratings unchanged from the source deliverables?
+- [ ] Are exploited severity ratings unchanged, and are blocked severity ratings clearly assessed from potential rather than demonstrated impact?
+- [ ] Did every `blocked_by_constraints` finding preserve its upstream confidence and name the external blocker?
 </exploit_mode_checks>
 <analysis_mode_checks>
 - [ ] Does every finding have `confidence` carried over unchanged from the deliverable?

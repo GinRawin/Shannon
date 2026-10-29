@@ -1,0 +1,3 @@
+<template_expansion_record_pass>
+This is a pipeline wiring test. Do not replay requests. Process only expansion artifacts.
+</template_expansion_record_pass>

@@ -1,0 +1,3 @@
+@include(shared/_filesystem.txt)
+
+This is a pipeline wiring test. Do not submit source-search templates. Finish successfully; the host will write the empty Explore artifacts.
