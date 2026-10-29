@@ -82,6 +82,16 @@ async function loadTaskToFindingIds(dir: string): Promise<Map<string, string>> {
     for (const [taskId, findingId] of Object.entries(map?.map ?? {})) {
       if (typeof findingId === 'string') result.set(taskId, findingId);
     }
+    // Expansion IDs are assigned from the final report namespace directly; unlike the original
+    // task IDs, they have no renumber map. Admit only IDs present in the committed candidate
+    // queue so this identity mapping cannot be inferred from an arbitrary collector entry.
+    const candidates = await committedJson<{ vulnerabilities?: Array<{ ID?: unknown }> }>(
+      dir,
+      `explore_candidates_${vulnClass}.json`,
+    );
+    for (const candidate of candidates?.vulnerabilities ?? []) {
+      if (typeof candidate.ID === 'string') result.set(candidate.ID, candidate.ID);
+    }
   }
   return result;
 }
@@ -90,24 +100,29 @@ async function loadExchanges(dir: string): Promise<Map<string, CapturedExchange[
   const result = new Map<string, CapturedExchange[]>();
   const receiptsByTask = new Map<string, HttpEvidenceReceipt[]>();
   for (const vulnClass of ALL_RECONCILIATION_CLASSES) {
-    const entries = await committedJson<
-      Array<{
-        vulnerability_id: string;
-        http_evidence_receipts?: HttpEvidenceReceipt[];
-        http_evidence_ids?: string[];
-        http_evidence_display?: string;
-      }>
-    >(dir, `${vulnClass}_exploit_collector.json`);
-    for (const entry of entries ?? []) {
-      // No filesystem inference, including for legacy runs. Display is an explicit agent choice.
-      receiptsByTask.set(
-        entry.vulnerability_id,
-        entry.http_evidence_display === 'include'
-          ? (entry.http_evidence_receipts ?? []).filter((receipt) =>
-              entry.http_evidence_ids?.includes(receipt.capture_id),
-            )
-          : [],
-      );
+    for (const file of [
+      `${vulnClass}_exploit_collector.json`,
+      `explore_expansion_${vulnClass}_exploit_collector.json`,
+    ]) {
+      const entries = await committedJson<
+        Array<{
+          vulnerability_id: string;
+          http_evidence_receipts?: HttpEvidenceReceipt[];
+          http_evidence_ids?: string[];
+          http_evidence_display?: string;
+        }>
+      >(dir, file);
+      for (const entry of entries ?? []) {
+        // No filesystem inference, including for legacy runs. Display is an explicit agent choice.
+        receiptsByTask.set(
+          entry.vulnerability_id,
+          entry.http_evidence_display === 'include'
+            ? (entry.http_evidence_receipts ?? []).filter((receipt) =>
+                entry.http_evidence_ids?.includes(receipt.capture_id),
+              )
+            : [],
+        );
+      }
     }
   }
   for (const [taskId, receipts] of receiptsByTask) {
@@ -326,11 +341,45 @@ function httpSection(
 async function loadReplayEntries(dir: string): Promise<ReplayEntry[]> {
   const entries: ReplayEntry[] = [];
   for (const vulnClass of ALL_RECONCILIATION_CLASSES) {
-    const collected = await committedJson<ReplayEntry[]>(dir, `${vulnClass}_exploit_collector_renumbered.json`);
-    if (collected !== undefined && !Array.isArray(collected)) throw new Error(`Invalid replay collector: ${vulnClass}`);
-    entries.push(...(collected ?? []));
+    for (const file of [
+      `${vulnClass}_exploit_collector_renumbered.json`,
+      `explore_expansion_${vulnClass}_exploit_collector.json`,
+    ]) {
+      const collected = await committedJson<ReplayEntry[]>(dir, file);
+      if (collected !== undefined && !Array.isArray(collected)) throw new Error(`Invalid replay collector: ${file}`);
+      entries.push(...(collected ?? []));
+    }
   }
   return entries;
+}
+
+/** IDs eligible for the final exploit report must have a selected, complete captured exchange. */
+export async function loadPacketBackedFindingIds(dir: string): Promise<ReadonlySet<string>> {
+  const taskToFinding = await loadTaskToFindingIds(dir);
+  const taskByFinding = new Map([...taskToFinding].map(([task, finding]) => [finding, task]));
+  const capturesByTask = await loadExchanges(dir);
+  const entries = await loadReplayEntries(dir);
+  const eligible = new Set<string>();
+  for (const entry of entries) {
+    if (entry.http_evidence_display !== 'include' || !entry.http_evidence_ids?.length) continue;
+    const entryId = entry.vulnerability_id ?? '';
+    // Original findings are rendered under the renumbered ID; expansion findings already use
+    // that final namespace and therefore fall through to their own ID.
+    const reportId = taskToFinding.get(entryId) ?? entryId;
+    const taskId = taskByFinding.get(reportId) ?? entryId;
+    if (!reportId) continue;
+    const captures = capturesByTask.get(taskId) ?? [];
+    if (
+      captures.length === entry.http_evidence_ids.length &&
+      captures.some(
+        (capture) =>
+          !capture.errors.length &&
+          capture.exchanges.some((exchange) => exchange.request_base64 && exchange.response_base64),
+      )
+    )
+      eligible.add(reportId);
+  }
+  return eligible;
 }
 
 export async function attachHttpEvidence(
@@ -363,6 +412,9 @@ export async function attachHttpEvidence(
         !capture.errors.length &&
         capture.exchanges.some((exchange) => exchange.request_base64 && exchange.response_base64),
     );
+    if (display !== 'include' || !complete) {
+      throw new Error(`Final report finding ${finding.finding_id} has no complete captured HTTP request and response`);
+    }
     const coverage: AdditionalSection = {
       heading: '自动化重放覆盖',
       items: [
@@ -374,14 +426,7 @@ export async function attachHttpEvidence(
         },
         {
           kind: 'prose',
-          text:
-            display === 'omit'
-              ? `根据利用验证方式，本报告不展示 HTTP 数据包。${entry?.http_evidence_reason ?? entry?.http_evidence_unavailable_reason ?? ''}`
-              : display === 'unreviewed'
-                ? '此旧记录尚未明确选择 HTTP 展示证据；未自动附加目录中的采集文件。'
-                : complete
-                  ? '已附上通过 HTTP 捕获工具记录的请求与响应。'
-                  : `缺少已关联的完整 HTTP 往返证据。${entriesByFinding.get(finding.finding_id)?.http_evidence_unavailable_reason ?? '请查看内部采集文件和其他利用证据。'}`,
+          text: '已附上通过 HTTP 捕获工具记录的完整请求与响应。',
         },
       ],
     };
@@ -396,7 +441,7 @@ export async function attachHttpEvidence(
               section.heading,
             ),
         ),
-        ...(display === 'include' && captures.length ? [httpSection(captures, redactions)] : []),
+        ...(captures.length ? [httpSection(captures, redactions)] : []),
         ...(entry &&
         (display !== 'include' || entry.verification_method !== 'http') &&
         (entry.proof_of_impact || entry.evidence_of_vulnerability)

@@ -334,7 +334,7 @@ export function createFindingCollector(exploit: boolean, allowedFindingIds?: Rea
     async execute(_toolCallId, input) {
       if (exploit && allowedFindingIds && !allowedFindingIds.has(input.finding_id)) {
         return errorResult(
-          `Finding ${input.finding_id} was not admitted by the record-stage evidence gate and cannot enter the final report.`,
+          `Finding ${input.finding_id} has no complete record-stage HTTP request/response capture and cannot enter the final report.`,
           'UnverifiedFindingError',
           false,
         );

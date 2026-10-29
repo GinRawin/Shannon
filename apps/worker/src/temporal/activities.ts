@@ -45,7 +45,12 @@ import { ExploitationCheckerService } from '../services/exploitation-checker.js'
 import { candidateMatchesExploreSearch, locationMatchesExploreSearch } from '../services/explore-search.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
 import { executeGitCommandWithRetry } from '../services/git-manager.js';
-import { attachHttpEvidence, configuredCaptureRedactions, writeReproductionScript } from '../services/http-evidence.js';
+import {
+  attachHttpEvidence,
+  configuredCaptureRedactions,
+  loadPacketBackedFindingIds,
+  writeReproductionScript,
+} from '../services/http-evidence.js';
 import { pdfProvenanceIsCurrent } from '../services/pdf-renderer.js';
 import {
   PostExploitationReplayRequiredError,
@@ -1546,7 +1551,8 @@ export async function runReportAgent(input: ActivityInput, exploit: boolean): Pr
         await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8'),
       ) as unknown;
       if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new Error('invalid finding allowlist');
-      verifiedFindingIds = new Set(ids as string[]);
+      const packetBackedIds = await loadPacketBackedFindingIds(deliverablesPath);
+      verifiedFindingIds = new Set((ids as string[]).filter((id) => packetBackedIds.has(id)));
     } catch {
       throw ApplicationFailure.nonRetryable(
         'Record-stage verification results are missing or invalid; the report cannot include unverified findings.',

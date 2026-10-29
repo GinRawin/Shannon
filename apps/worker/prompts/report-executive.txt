@@ -73,6 +73,7 @@ Read through the concatenated report and identify which vulnerability entries to
 <exploit_mode_keep>
 - Vulnerability entries under `## Successfully Exploited Vulnerabilities` with IDs matching `### [TYPE]-[NUMBER]` when the assembled input includes their verified Record verdict.
 - Vulnerability entries under `## Potential Vulnerabilities (Validation Blocked)` with IDs matching `### [TYPE]-[NUMBER]` only when they document a source-confirmed flaw and a concrete external operational blocker. These are reported as `blocked_by_constraints`, never as demonstrated exploitation.
+- A finding is eligible only when the record stage captured at least one complete HTTP request/response exchange for that exact finding. Do not add findings whose record material has no captured packet, including blocked findings without a complete exchange; the host enforces this gate.
 </exploit_mode_keep>
 <analysis_mode_keep>
 - Vulnerability entries under `## Identified Vulnerabilities` sections with IDs matching `### [TYPE]-[NUMBER]`.
