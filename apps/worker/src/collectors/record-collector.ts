@@ -12,6 +12,10 @@ function errorResult(message: string) {
   return { content: [{ type: 'text' as const, text: JSON.stringify({ status: 'error', message, retryable: true }, null, 2) }], details: undefined };
 }
 
+function toolResult(data: Record<string, unknown>) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }], details: undefined };
+}
+
 /** Accept a single explicit HTTP transfer; reject curl features that can add destinations. */
 export function validateRecordTarget(args: readonly string[], targetUrl: string): void {
   const valueOptions = new Set(['--url', '--request', '--header', '--data', '--data-raw', '--data-binary', '--data-urlencode', '--json', '--form', '--form-string', '--cookie', '--cookie-jar', '--user', '--user-agent', '--referer', '--max-time', '--connect-timeout', '--output', '--dump-header', '--write-out']);
