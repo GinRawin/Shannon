@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { AddExploitInput } from '../collectors/exploit-collector.js';
 import type { RecordVerdict } from '../collectors/record-collector.js';
 import { atomicWrite } from '../utils/file-io.js';
+import { type BrowserReplayPlan, hasTrustedBrowserReplay } from './browser-replay.js';
 import { renderExploitDeliverable } from './exploit-renderer.js';
 import { loadPacketBackedFindingIds } from './http-evidence.js';
 import type { HttpReplayPlan } from './http-replay.js';
@@ -33,6 +34,7 @@ export interface ExploitReviewResult {
   verdict: 'false_positive' | 'retry';
   reason: string;
   revised_http_replay?: HttpReplayPlan;
+  revised_browser_replay?: BrowserReplayPlan;
   variable_requirements?: Record<string, unknown>;
   record_instructions?: string[];
   expected_evidence?: Record<string, unknown>;
@@ -345,6 +347,8 @@ export async function writeFinalRecordFailureAudit(
       review_reason: review?.reason ?? null,
       original_replay_plan: failure.original_http_replay,
       revised_replay_plan: review?.revised_http_replay ?? null,
+      original_browser_replay: failure.source_entry?.browser_replay ?? null,
+      revised_browser_replay: review?.revised_browser_replay ?? null,
       record_log_path: failure.record_attempts.at(-1)?.record_log_path ?? null,
       exploit_log_path: failure.exploit_log_path,
       report_blocked: false,
@@ -400,7 +404,19 @@ async function recordReportCandidates(deliverablesDir: string): Promise<RecordRe
         const reasons: string[] = [];
         if (verdict?.status !== 'verified') reasons.push('missing verified Record verdict');
         if (!packetBackedIds.has(finalId)) reasons.push('missing complete associated HTTP packet');
-        if (vulnerabilityClass === 'xss' && !verdict?.browser_verification)
+        if (
+          vulnerabilityClass === 'xss' &&
+          (JSON.stringify([...(verdict?.capture_ids ?? [])].sort()) !==
+            JSON.stringify([...((entry.http_evidence_ids as string[]) ?? [])].sort()) ||
+            !(await hasTrustedBrowserReplay({
+              deliverablesDir,
+              findingId: entry.vulnerability_id,
+              stage: verdict?.stage,
+              plan: entry.browser_replay as BrowserReplayPlan | undefined,
+              verification: verdict?.browser_verification,
+              httpCaptureIds: verdict?.capture_ids ?? [],
+            })))
+        )
           reasons.push('missing JavaScript execution evidence');
         failures.push({
           finding_id: entry.vulnerability_id,
@@ -477,6 +493,7 @@ export async function applyRecordRetryEvidence(
   deliverablesDir: string,
   verdicts: readonly RecordVerdict[],
   plans: ReadonlyMap<string, HttpReplayPlan>,
+  browserPlans: ReadonlyMap<string, BrowserReplayPlan> = new Map(),
 ): Promise<string[]> {
   const verified = new Set<string>();
   for (const vulnerabilityClass of RECORD_CLASSES) {
@@ -514,6 +531,7 @@ export async function applyRecordRetryEvidence(
           http_replay_verification: verdict.http_replay_verification,
         });
         if (verdict.browser_verification) {
+          entry.browser_replay = browserPlans.get(verdict.finding_id);
           entry.browser_verification = verdict.browser_verification;
           entry.browser_evidence_files = verdict.browser_verification.evidence_files;
         }

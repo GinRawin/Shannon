@@ -61,6 +61,7 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
       'record-verification-failures.jsonl',
       'http-exchanges',
       'http-replay-verifications',
+      'browser-replay-verifications',
     );
     for (const vulnerabilityClass of ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous']) {
       paths.push(

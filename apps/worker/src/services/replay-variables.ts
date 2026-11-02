@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { type BrowserReplayPlan, browserReplayVariableNames } from './browser-replay.js';
 import type { HttpReplayPlan } from './http-replay.js';
 
 export type ReplayVariableRefresh = 'each_attempt' | 'on_ttl_expiry';
@@ -29,15 +30,26 @@ export interface ReplayVariableResolution {
   diagnostics: ReplayVariableDiagnostic[];
 }
 
-/** Load only JSON response bodies needed for cross-finding extraction; values never leave private replay resolution. */
-export async function loadReplayResponseBodies(deliverablesDir: string): Promise<ReadonlyMap<string, unknown>> {
+export interface ReplayVariableCacheEntry {
+  definition: string;
+  value: string;
+  capturedAt: number;
+}
+
+/** Keep the source timestamp with each body so rereading a stale token cannot renew its TTL. */
+export async function loadReplayResponses(deliverablesDir: string): Promise<{
+  responseBodies: ReadonlyMap<string, unknown>;
+  responseCapturedAt: ReadonlyMap<string, number>;
+}> {
   const root = path.join(deliverablesDir, 'http-exchanges');
   const responses = new Map<string, unknown>();
+  const capturedAt = new Map<string, number>();
   let directories: import('node:fs').Dirent[];
   try {
     directories = await fs.readdir(root, { withFileTypes: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return responses;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+      return { responseBodies: responses, responseCapturedAt: capturedAt };
     throw error;
   }
   for (const directory of directories) {
@@ -49,22 +61,33 @@ export async function loadReplayResponseBodies(deliverablesDir: string): Promise
     for (const name of files) {
       try {
         const record = JSON.parse(await fs.readFile(path.join(root, directory.name, name), 'utf8')) as {
+          captured_at?: string;
+          exit_code?: number;
+          errors?: unknown[];
           exchanges?: Array<{ response_base64?: unknown }>;
         };
+        if (record.exit_code !== 0 || record.errors?.length) continue;
+        const timestamp = Date.parse(record.captured_at ?? '');
+        if (!Number.isFinite(timestamp) || timestamp <= (capturedAt.get(directory.name) ?? -Infinity)) continue;
         const encoded = record.exchanges?.at(-1)?.response_base64;
         if (typeof encoded !== 'string') continue;
         const raw = Buffer.from(encoded, 'base64').toString('utf8');
-        const separator = raw.lastIndexOf('\r\n\r\n');
-        const alternate = raw.lastIndexOf('\n\n');
-        const body = raw.slice(Math.max(separator >= 0 ? separator + 4 : 0, alternate >= 0 ? alternate + 2 : 0));
+        const separator = raw.indexOf('\r\n\r\n');
+        const alternate = raw.indexOf('\n\n');
+        const body = raw.slice(separator >= 0 ? separator + 4 : alternate >= 0 ? alternate + 2 : 0);
         responses.set(directory.name, JSON.parse(body) as unknown);
-        break;
+        capturedAt.set(directory.name, timestamp);
       } catch {
         // Try the next newest complete JSON response for this finding.
       }
     }
   }
-  return responses;
+  return { responseBodies: responses, responseCapturedAt: capturedAt };
+}
+
+/** Compatibility projection for callers that only need the parsed bodies. */
+export async function loadReplayResponseBodies(deliverablesDir: string): Promise<ReadonlyMap<string, unknown>> {
+  return (await loadReplayResponses(deliverablesDir)).responseBodies;
 }
 
 function validFindingId(findingId: string): boolean {
@@ -76,7 +99,7 @@ function normalizeDefinitions(data: unknown): Record<string, ReplayVariableDefin
   const values: Record<string, ReplayVariableDefinition> = {};
   for (const [key, value] of Object.entries(data)) {
     const name = key.toUpperCase();
-    if (!/^[A-Z][A-Z0-9_]*$/.test(name) || name === 'BASE_URL' || Object.hasOwn(values, name))
+    if (!/^[A-Z][A-Z0-9_]*$/.test(name) || ['BASE_URL', 'XSS_MARKER'].includes(name) || Object.hasOwn(values, name))
       throw new Error('Invalid variable file');
     if (typeof value === 'string') {
       if (value.includes('\0')) throw new Error('Invalid variable file');
@@ -180,15 +203,23 @@ export function resolveReplayVariables(args: {
   baseUrl: string;
   now?: number;
   responseBodies?: ReadonlyMap<string, unknown>;
+  responseCapturedAt?: ReadonlyMap<string, number>;
+  requiredVariables?: readonly string[];
+  cache?: Map<string, ReplayVariableCacheEntry>;
 }): ReplayVariableResolution {
   const now = args.now ?? Date.now();
   const values: Record<string, string> = { BASE_URL: new URL(args.baseUrl).origin };
   const diagnostics: ReplayVariableDiagnostic[] = [];
+  const required = args.requiredVariables ? new Set(args.requiredVariables) : undefined;
   for (const [name, rawDefinition] of Object.entries(args.definitions)) {
+    if (required && !required.has(name)) continue;
     const definition =
       typeof rawDefinition === 'string' ? { kind: 'static' as const, value: rawDefinition } : rawDefinition;
     const kind = definition.kind ?? 'static';
+    // Dynamic definitions describe how to obtain a value, not the age of that value.
+    // TOTP is generated now; response extraction uses the source capture's timestamp.
     if (
+      kind === 'static' &&
       definition.ttl_seconds !== undefined &&
       definition.updated_at !== undefined &&
       now - Date.parse(definition.updated_at) >= definition.ttl_seconds * 1000
@@ -200,6 +231,20 @@ export function resolveReplayVariables(args: {
       let value: unknown;
       if (kind === 'totp' && 'value' in definition) value = generateTotp(definition.value, now);
       else if (kind === 'response_extract' && 'source_finding' in definition) {
+        const cached = args.cache?.get(name);
+        const signature = JSON.stringify(definition);
+        const ttl = definition.ttl_seconds;
+        if (
+          definition.refresh === 'on_ttl_expiry' &&
+          ttl !== undefined &&
+          cached?.definition === signature &&
+          now - cached.capturedAt < ttl * 1000
+        ) {
+          values[name] = cached.value;
+          diagnostics.push({ name, kind, status: 'resolved' });
+          continue;
+        }
+        args.cache?.delete(name);
         const response = args.responseBodies?.get(definition.source_finding);
         value = extractPointer(response, definition.pointer);
         if (value === undefined) {
@@ -211,6 +256,18 @@ export function resolveReplayVariables(args: {
           });
           continue;
         }
+        const sourceTime = args.responseCapturedAt?.get(definition.source_finding);
+        if (ttl !== undefined && (sourceTime === undefined || now - sourceTime >= ttl * 1000)) {
+          diagnostics.push({
+            name,
+            kind,
+            status: 'expired',
+            message: 'The source response is stale or has no capture timestamp; refresh the source flow.',
+          });
+          continue;
+        }
+        if (['string', 'number'].includes(typeof value) && value !== '' && sourceTime !== undefined)
+          args.cache?.set(name, { definition: signature, value: String(value), capturedAt: sourceTime });
       } else value = 'value' in definition ? definition.value : undefined;
       if (!['string', 'number'].includes(typeof value) || value === '') {
         diagnostics.push({
@@ -232,7 +289,38 @@ export function resolveReplayVariables(args: {
       });
     }
   }
+  for (const name of required ?? []) {
+    if (!['BASE_URL', 'XSS_MARKER'].includes(name) && !Object.hasOwn(args.definitions, name))
+      diagnostics.push({ name, kind: 'static', status: 'missing', message: 'No saved input definition exists.' });
+  }
   return { values, diagnostics };
+}
+
+/** Scope and refresh each finding independently; caches contain secrets only in memory. */
+export function createReplayVariableResolver(deliverablesDir: string, baseUrl: string) {
+  const caches = new Map<string, Map<string, ReplayVariableCacheEntry>>();
+  return async (
+    findingId: string,
+    definitions: Record<string, ReplayVariableDefinition>,
+    plans: { httpPlan?: HttpReplayPlan; browserPlan?: BrowserReplayPlan },
+  ): Promise<ReplayVariableResolution> => {
+    let cache = caches.get(findingId);
+    if (!cache) {
+      cache = new Map();
+      caches.set(findingId, cache);
+    }
+    const requiredVariables = [
+      ...(plans.httpPlan ? missingReplayVariables(plans.httpPlan, {}) : []),
+      ...(plans.browserPlan ? browserReplayVariableNames(plans.browserPlan) : []),
+    ];
+    return resolveReplayVariables({
+      definitions,
+      baseUrl,
+      requiredVariables,
+      cache,
+      ...(await loadReplayResponses(deliverablesDir)),
+    });
+  };
 }
 
 /** Compatibility loader: structured variables are resolved for the current attempt. */
@@ -248,6 +336,7 @@ export function missingReplayVariables(
   plan: HttpReplayPlan,
   values: Record<string, string> | Record<string, ReplayVariableDefinition>,
   configured: readonly string[] = [],
+  browserPlan?: BrowserReplayPlan,
 ): string[] {
   const available = new Set(['BASE_URL', ...configured, ...Object.keys(values).filter((key) => values[key])]);
   const missing = new Set<string>();
@@ -269,6 +358,16 @@ export function missingReplayVariables(
     for (const name of [...Object.keys(step.save_json ?? {}), ...Object.keys(step.save_headers ?? {})])
       available.add(name.toUpperCase());
   }
+  // HTTP extraction supplies only the HTTP runner. Browser replay needs its own saved
+  // definition (possibly pointing at that response) or a configured input.
+  const browserAvailable = new Set([
+    'BASE_URL',
+    'XSS_MARKER',
+    ...configured,
+    ...Object.keys(values).filter((key) => values[key]),
+  ]);
+  for (const name of browserPlan ? browserReplayVariableNames(browserPlan) : [])
+    if (!browserAvailable.has(name)) missing.add(name);
   return [...missing].sort();
 }
 
@@ -280,6 +379,7 @@ export async function updateReplayVariables(
   updates: Record<string, string>,
   configured: readonly string[] = [],
   baseline: Readonly<Record<string, ReplayVariableDefinition>> = {},
+  browserPlan?: BrowserReplayPlan,
 ): Promise<string[]> {
   if (!validFindingId(findingId)) throw new Error('Invalid finding ID');
   const content = JSON.stringify({
@@ -297,12 +397,18 @@ export async function updateReplayVariables(
       match[1] === undefined ? [] : [match[1].toUpperCase()],
     ),
   );
+  for (const name of browserPlan ? browserReplayVariableNames(browserPlan) : []) referenced.add(name);
   const extracted = new Set(
     [...(plan.setup ?? []), ...plan.steps, ...(plan.cleanup ?? [])].flatMap((step) =>
       [...Object.keys(step.save_json ?? {}), ...Object.keys(step.save_headers ?? {})].map((name) => name.toUpperCase()),
     ),
   );
-  const protectedNames = new Set(['BASE_URL', ...configured.map((name) => name.toUpperCase()), ...extracted]);
+  const protectedNames = new Set([
+    'BASE_URL',
+    'XSS_MARKER',
+    ...configured.map((name) => name.toUpperCase()),
+    ...extracted,
+  ]);
   const normalized: Record<string, string> = {};
   for (const [rawName, value] of Object.entries(updates)) {
     const name = rawName.toUpperCase();
@@ -318,7 +424,7 @@ export async function updateReplayVariables(
 
   const current = await loadReplayVariableDefinitions(directory, findingId);
   const merged = { ...baseline, ...current, ...normalized };
-  const missing = missingReplayVariables(plan, merged, configured);
+  const missing = missingReplayVariables(plan, merged, configured, browserPlan);
   if (missing.length) throw new Error(`The replay still has missing variables: ${missing.join(', ')}.`);
   if (Buffer.byteLength(JSON.stringify(merged), 'utf8') > 65536) throw new Error('Replay variable file is too large.');
 

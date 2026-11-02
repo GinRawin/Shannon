@@ -6,6 +6,7 @@ import { REPRODUCTION_SCRIPT_FILENAME } from '../paths.js';
 import type { Credentials } from '../types/config.js';
 import type { ReconciliationClass } from '../types/reconciliation.js';
 import { ALL_RECONCILIATION_CLASSES } from '../types/reconciliation.js';
+import { type BrowserReplayPlan, type BrowserReplayVerification, hasTrustedBrowserReplay } from './browser-replay.js';
 import { type HttpEvidenceReceipt, readVerifiedHttpEvidence } from './capture-http-request.js';
 import { readCommittedFile } from './git-manager.js';
 import type { ParsedHttpTrace } from './http-capture.js';
@@ -38,12 +39,8 @@ interface ReplayEntry {
   evidence_of_vulnerability?: string;
   exploitation_steps?: string[];
   browser_evidence_files?: string[];
-  browser_verification?: {
-    assertion_type: string;
-    expected: string;
-    observed: string;
-    evidence_files: string[];
-  };
+  browser_replay?: BrowserReplayPlan;
+  browser_verification?: BrowserReplayVerification;
 }
 export interface CaptureRedaction {
   value: string;
@@ -398,6 +395,22 @@ export async function attachHttpEvidence(
   const capturesByTask = await loadExchanges(deliverablesDir);
   const entries = await loadReplayEntries(deliverablesDir);
   const entriesByFinding = new Map(entries.map((entry) => [entry.vulnerability_id, entry]));
+  for (const finding of findings) {
+    const taskId = taskByFinding.get(finding.finding_id);
+    const entry = entriesByFinding.get(finding.finding_id);
+    if (
+      finding.finding_id.startsWith('XSS-') &&
+      !(await hasTrustedBrowserReplay({
+        deliverablesDir,
+        findingId: taskId ?? '',
+        plan: entry?.browser_replay,
+        verification: entry?.browser_verification,
+        stage: entry?.browser_verification?.stage,
+        httpCaptureIds: entry?.http_evidence_ids ?? [],
+      }))
+    )
+      throw new Error(`Final report finding ${finding.finding_id} has no trusted browser execution receipt`);
+  }
   const verifiedIds = new Set(
     entries
       .filter((entry) => entry.status === 'exploited' && hasVerifiedReplay(entry))
@@ -458,7 +471,9 @@ export async function attachHttpEvidence(
                   [
                     entry.proof_of_impact ?? entry.evidence_of_vulnerability ?? '',
                     ...(entry.browser_verification
-                      ? [`Record browser assertion passed: ${entry.browser_verification.assertion_type}; expected “${entry.browser_verification.expected}”, observed “${entry.browser_verification.observed}”.`]
+                      ? [
+                          `Record browser assertion passed: ${entry.browser_verification.assertion_type}; expected “${entry.browser_verification.expected}”, observed “${entry.browser_verification.observed}”.`,
+                        ]
                       : []),
                     ...(entry.browser_evidence_files ?? []).map((file) => `浏览器证据文件：${file}`),
                   ].join('\n\n'),

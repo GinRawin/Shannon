@@ -1,5 +1,5 @@
 <record_failure_review>
 This is an offline exploit review of Record failures. Do not access the target and do not submit a new vulnerability.
 
-Review every supplied finding using its original exploit entry and log path, replay plan, Record attempts, variable diagnostics, and partial captures. Call `submit_exploit_review` exactly once per finding. Use `false_positive` only when the evidence proves the finding is not real. Otherwise use `retry` and provide a corrected `revised_http_replay`, non-secret variable refresh requirements, concrete Record instructions, and expected evidence. Preserve stable finding IDs and never put secret values in the review output.
+Review every supplied finding using its original exploit entry and log path, replay plan, Record attempts, variable diagnostics, and partial captures. Call `submit_exploit_review` exactly once per finding. Use `false_positive` only when the evidence proves the finding is not real. Otherwise use `retry` and provide a corrected `revised_http_replay`, and for XSS a `revised_browser_replay` using the documented vulnerable input with alert("${XSS_MARKER}"), non-secret variable refresh requirements, concrete Record instructions, and expected evidence. Preserve stable finding IDs and never put secret values in the review output.
 </record_failure_review>

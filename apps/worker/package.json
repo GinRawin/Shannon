@@ -52,6 +52,7 @@
     "dotenv": "^16.4.5",
     "handlebars": "^4.7.9",
     "js-yaml": "^4.1.0",
+    "playwright-core": "1.56.1",
     "typebox": "1.1.38",
     "zx": "^8.0.0"
   },

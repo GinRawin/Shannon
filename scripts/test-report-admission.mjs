@@ -175,15 +175,15 @@ await writeFile(verdictFile, `${JSON.stringify([
     },
   },
 ], null, 2)}\n`);
-assert.deepEqual(await validateRecordReportAdmission(admissionDir), []);
+assert.deepEqual(await validateRecordReportAdmission(admissionDir), ['XSS-01: missing JavaScript execution evidence']);
 await writeFile(verdictFile, `${JSON.stringify([{
   ...strictVerdict('XSS-01', strictXssReceipt),
   browser_verification: {
     assertion_type: 'dialog_text_contains', expected: 'marker', observed: 'marker', evidence_files: ['.shannon/scratchpad/xss.png'],
   },
 }], null, 2)}\n`);
-assert.deepEqual(await validateRecordReportAdmission(admissionDir), ['INJ-01: missing verified Record verdict']);
-console.log('PASS strict admission blocks missing verdicts and XSS without JavaScript execution evidence');
+assert.deepEqual(await validateRecordReportAdmission(admissionDir), ['INJ-01: missing verified Record verdict', 'XSS-01: missing JavaScript execution evidence']);
+console.log('PASS strict admission rejects missing verdicts and self-reported XSS execution assertions');
 
 // Exercise the repaired loop with overlapping source/report IDs and both initial and expansion failures.
 const loopDir = `${temporary}/closed-loop`;

@@ -73,6 +73,7 @@ function scrubEntryText(value: unknown, oldToNew: ReadonlyMap<string, string>): 
         'http_replay',
         'http_replay_verification',
         'browser_verification',
+        'browser_replay',
         'http_evidence_receipts',
         'http_evidence_ids',
         'reproduction_capture_ids',

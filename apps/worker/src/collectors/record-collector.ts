@@ -1,5 +1,11 @@
 import { defineTool, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import {
+  type BrowserReplayPlan,
+  type BrowserReplayVerification,
+  browserReplayContainsSecrets,
+  hasTrustedBrowserReplay,
+} from '../services/browser-replay.js';
 import type { HttpEvidenceReceipt } from '../services/capture-http-request.js';
 import { captureHttpRequest } from '../services/capture-http-request.js';
 import {
@@ -125,12 +131,7 @@ export interface RecordVerdict {
   frontend_reason: string;
   http_evidence_receipts?: HttpEvidenceReceipt[];
   http_replay_verification?: HttpReplayVerification;
-  browser_verification?: {
-    assertion_type: BrowserAssertionType;
-    expected: string;
-    observed: string;
-    evidence_files: string[];
-  };
+  browser_verification?: BrowserReplayVerification;
   failure_kind?: string;
   error?: string;
   attempts?: number;
@@ -140,12 +141,6 @@ export interface RecordVerdict {
   record_log_path?: string;
   stage?: 'record' | 'record-expansion' | 'record-retry';
 }
-
-export type BrowserAssertionType =
-  | 'document_title_contains'
-  | 'dialog_text_contains'
-  | 'visible_text_contains'
-  | 'url_contains';
 
 export function createRecordCollector(options: {
   deliverablesDir: string;
@@ -161,7 +156,14 @@ export function createRecordCollector(options: {
     updates: Record<string, string>,
   ) => Promise<string[]>;
   xssFindingIds?: ReadonlySet<string>;
-  validateBrowserEvidence?: (findingId: string, files: string[]) => Promise<string[]>;
+  browserPlans?: ReadonlyMap<string, BrowserReplayPlan>;
+  verifyBrowserReplay?: (
+    findingId: string,
+    plan: BrowserReplayPlan,
+    evidence: HttpEvidenceReceipt[],
+    attempt: number,
+    signal?: AbortSignal,
+  ) => Promise<{ verification?: BrowserReplayVerification; error?: string }>;
   stage?: 'record' | 'record-expansion' | 'record-retry';
   recordLogPath?: string;
   verifyReplay?: (
@@ -189,59 +191,12 @@ export function createRecordCollector(options: {
   >();
   const tools: ToolDefinition[] = [
     defineTool({
-      name: 'verify_browser_assertion',
-      label: 'Verify Browser Impact Assertion',
-      description:
-        "Record a deterministic observation from the Record agent Playwright session after reproducing the Exploit agent's documented browser steps. The host checks the assertion match and that every screenshot/evidence file exists under .shannon/scratchpad. XSS findings require a changed document title or a JavaScript dialog; a screenshot or visible reflected payload alone does not prove script execution.",
-      parameters: Type.Object({
-        finding_id: Type.String(),
-        assertion_type: Type.Union([
-          Type.Literal('document_title_contains'),
-          Type.Literal('dialog_text_contains'),
-          Type.Literal('visible_text_contains'),
-          Type.Literal('url_contains'),
-        ]),
-        expected: Type.String({ minLength: 1, maxLength: 500 }),
-        observed: Type.String({ minLength: 1, maxLength: 2000 }),
-        evidence_files: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 5 }),
-      }),
-      async execute(_id, input) {
-        if (!options.validIds.has(input.finding_id))
-          return errorResult('Finding is not present in the exploitation queues.');
-        if (verdicts.has(input.finding_id)) return errorResult('This finding already has a record verdict.');
-        browserResults.delete(input.finding_id);
-        if (input.expected.trim() !== input.expected || !input.observed.includes(input.expected))
-          return errorResult('The observed browser value does not contain the expected impact marker.');
-        if (
-          options.xssFindingIds?.has(input.finding_id) &&
-          !['document_title_contains', 'dialog_text_contains'].includes(input.assertion_type)
-        )
-          return errorResult(
-            'XSS browser verification requires a JavaScript execution signal: document title or dialog text.',
-          );
-        if (!options.validateBrowserEvidence) return errorResult('Host browser evidence validation is unavailable.');
-        try {
-          const validatedFiles = await options.validateBrowserEvidence(input.finding_id, input.evidence_files);
-          const result = {
-            assertion_type: input.assertion_type,
-            expected: input.expected,
-            observed: input.observed,
-            evidence_files: validatedFiles,
-          };
-          browserResults.set(input.finding_id, result);
-          return successResult({ finding_id: input.finding_id, status: 'assertion_passed', ...result });
-        } catch (error) {
-          return errorResult(error instanceof Error ? error.message : 'Browser evidence could not be validated.');
-        }
-      },
-    }),
-    defineTool({
       name: 'verify_http_replay',
       label: 'Execute Exploit Verification Plan',
       description:
-        'Execute the structured HTTP verification plan saved by the Exploit agent. The host evaluates each status/body impact assertion and captures every real request/response. A passing result is required for a verified HTTP verdict.',
+        'Execute the saved HTTP plan and, for XSS, the saved browser plan in a fresh host browser with an unpredictable dialog challenge. The host evaluates each status/body impact assertion and captures every real request/response. A passing result is required for a verified HTTP verdict.',
       parameters: Type.Object({ finding_id: Type.String() }),
-      async execute(_id, input) {
+      async execute(_id, input, signal) {
         if (!options.validIds.has(input.finding_id))
           return errorResult('Finding is not present in the exploitation queues.');
         if (verdicts.has(input.finding_id) || replayResults.has(input.finding_id))
@@ -263,12 +218,17 @@ export function createRecordCollector(options: {
           return errorResult(
             'Replay plan contains literal authentication material; record a failed verdict for review.',
           );
+        const browserPlan = options.browserPlans?.get(input.finding_id);
+        if (browserPlan && browserReplayContainsSecrets(browserPlan, options.secrets ?? []))
+          return errorResult('Browser replay contains literal authentication material; use private replay variables.');
         replayResults.delete(input.finding_id);
+        browserResults.delete(input.finding_id);
         replayAttempts.set(input.finding_id, (replayAttempts.get(input.finding_id) ?? 0) + 1);
         inFlight.add(input.finding_id);
+        let capturedReceipts: HttpEvidenceReceipt[] = [];
         try {
           const result = await options.verifyReplay(input.finding_id, plan);
-          const capturedReceipts = result.evidence ?? [];
+          capturedReceipts = result.evidence ?? [];
           for (const receipt of capturedReceipts) receipts.set(receipt.capture_id, receipt);
           if (!result.verification) {
             failedReplays.add(input.finding_id);
@@ -296,19 +256,54 @@ export function createRecordCollector(options: {
               captures: capturedReceipts,
             });
           }
+          if (options.xssFindingIds?.has(input.finding_id) || input.finding_id.startsWith('XSS-')) {
+            const browserResult =
+              browserPlan && options.verifyBrowserReplay
+                ? await options.verifyBrowserReplay(
+                    input.finding_id,
+                    browserPlan,
+                    capturedReceipts,
+                    replayAttempts.get(input.finding_id) ?? 1,
+                    signal,
+                  )
+                : { error: 'A saved browser replay plan and host browser verifier are required for XSS.' };
+            const trusted =
+              browserResult.verification &&
+              (await hasTrustedBrowserReplay({
+                deliverablesDir: options.deliverablesDir,
+                verification: browserResult.verification,
+                findingId: input.finding_id,
+                stage: options.stage ?? 'record',
+                plan: browserPlan,
+                httpCaptureIds: capturedReceipts.map((receipt) => receipt.capture_id),
+                targetUrl: options.targetUrl,
+              }));
+            if (!trusted || !browserResult.verification) {
+              const error = browserResult.error ?? 'Host browser execution evidence is missing or invalid.';
+              failedReplays.add(input.finding_id);
+              replayFailures.set(input.finding_id, {
+                error,
+                captureIds: capturedReceipts.map((receipt) => receipt.capture_id),
+                variableDiagnostics: [],
+              });
+              return toolResult({ status: 'error', message: error, captures: capturedReceipts });
+            }
+            browserResults.set(input.finding_id, browserResult.verification);
+          }
           replayResults.set(input.finding_id, { verification: result.verification, receipts: capturedReceipts });
           failedReplays.delete(input.finding_id);
           replayFailures.delete(input.finding_id);
           return successResult({
             finding_id: input.finding_id,
             verification: result.verification,
+            browser_verification: browserResults.get(input.finding_id),
             captures: capturedReceipts,
           });
         } catch (error) {
           failedReplays.add(input.finding_id);
           replayFailures.set(input.finding_id, {
             error: error instanceof Error ? error.message : 'Replay verification failed.',
-            captureIds: [],
+            captureIds: capturedReceipts.map((receipt) => receipt.capture_id),
             variableDiagnostics: [],
           });
           return errorResult(error instanceof Error ? error.message : 'Replay verification failed.');
@@ -460,7 +455,11 @@ export function createRecordCollector(options: {
           return errorResult(
             'A verified finding requires every complete capture from a passing HTTP replay. Diagnostic captures and browser-only observations are insufficient.',
           );
-        if (input.status === 'verified' && options.xssFindingIds?.has(input.finding_id) && !browser)
+        if (
+          input.status === 'verified' &&
+          (options.xssFindingIds?.has(input.finding_id) || input.finding_id.startsWith('XSS-')) &&
+          !browser
+        )
           return errorResult(
             'XSS cannot be marked verified without a passing browser assertion that confirms JavaScript execution.',
           );

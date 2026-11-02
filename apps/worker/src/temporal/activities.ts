@@ -38,6 +38,7 @@ import {
   TYPST_TEMPLATE,
 } from '../paths.js';
 import { getAgentGitPaths } from '../services/agent-git-paths.js';
+import { type BrowserReplayPlan, verifyBrowserReplay } from '../services/browser-replay.js';
 import { compactReportFindings as compactReportFindingsService } from '../services/compaction-core.js';
 import { getContainer, getOrCreateContainer, removeContainer } from '../services/container.js';
 import { classifyErrorForTemporal, PentestError } from '../services/error-handling.js';
@@ -72,7 +73,6 @@ import {
   RECORD_CLASSES,
   type RecordFailure,
   refreshRecordedReportEvidence,
-  validateRecordBrowserEvidence,
   validateRecordReportAdmission,
   writeFinalRecordFailureAudit,
 } from '../services/record-verification.js';
@@ -81,12 +81,10 @@ import {
   sparseExploitCollectorPath,
 } from '../services/renumber-core.js';
 import {
-  loadReplayResponseBodies,
+  createReplayVariableResolver,
   loadReplayVariableDefinitions,
-  loadReplayVariables,
   missingReplayVariables,
   type ReplayVariableDefinition,
-  resolveReplayVariables,
   updateReplayVariables,
 } from '../services/replay-variables.js';
 import {
@@ -1051,15 +1049,17 @@ async function runExploitAgentWithCollector(
   const collector = createExploitCollector({
     vulnClass,
     validIds,
-    validateReplayVariables: async (findingId, plan) => {
+    validateReplayVariables: async (findingId, plan, browserPlan) => {
       try {
-        const values = await loadReplayVariables(replayVariableDir, findingId);
-        const missing = missingReplayVariables(plan, values, configuredVariables);
+        // Submission validates the handoff contract. Dynamic values are resolved at replay time,
+        // when the source finding may have produced a newer response.
+        const values = await loadReplayVariableDefinitions(replayVariableDir, findingId);
+        const missing = missingReplayVariables(plan, values, configuredVariables, browserPlan);
         return missing.length
           ? `Save the required replay variables in ${replayVariableDir}/${findingId}.json before submitting: ${missing.join(', ')}.`
           : undefined;
       } catch {
-        return `Invalid replay variable file for ${findingId}; write a private JSON object of string values.`;
+        return `Invalid replay variable file for ${findingId}; write a private JSON object of values or refresh definitions.`;
       }
     },
   });
@@ -1214,6 +1214,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
   if (isErr(config)) throw deterministicActivityFailure(config.error, 'ConfigurationError');
   const captureRedactions = configuredCaptureRedactions(config.value?.authentication?.credentials);
   const verificationPlans = new Map<string, import('../services/http-replay.js').HttpReplayPlan>();
+  const browserPlans = new Map<string, BrowserReplayPlan>();
   const exploitContext: Array<{ finding_id: string; exploit_log_path: string }> = [];
   for (const vulnerabilityClass of classes) {
     const collectorPath = path.join(
@@ -1228,10 +1229,12 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         status?: unknown;
         http_replay?: import('../services/http-replay.js').HttpReplayPlan | null;
         exploit_log_path?: string;
+        browser_replay?: BrowserReplayPlan;
       }>;
       for (const entry of entries) {
         if (entry.status !== 'exploited' || typeof entry.vulnerability_id !== 'string') continue;
         if (entry.http_replay) verificationPlans.set(entry.vulnerability_id, entry.http_replay);
+        if (entry.browser_replay) browserPlans.set(entry.vulnerability_id, entry.browser_replay);
         exploitContext.push({
           finding_id: entry.vulnerability_id,
           exploit_log_path:
@@ -1266,6 +1269,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
     input.exploreExpansion ? 'expansion' : 'initial',
   );
   const configuredReplayVariables = Object.keys(configuredReplayDefinitions);
+  const resolveVariables = createReplayVariableResolver(dir, input.webUrl);
   const collector = createRecordCollector({
     deliverablesDir: dir,
     targetUrl: input.webUrl,
@@ -1274,13 +1278,45 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
     secrets: captureRedactions.map((item) => item.value),
     verificationPlans,
     inspectReplayVariables: async (findingId) =>
-      Object.keys(await loadReplayVariables(replayVariableDir, findingId)).sort(),
+      Object.keys(await loadReplayVariableDefinitions(replayVariableDir, findingId)).sort(),
     repairReplayVariables: (findingId, plan, updates) =>
-      updateReplayVariables(replayVariableDir, findingId, plan, updates, configuredReplayVariables),
+      updateReplayVariables(
+        replayVariableDir,
+        findingId,
+        plan,
+        updates,
+        configuredReplayVariables,
+        {},
+        browserPlans.get(findingId),
+      ),
     xssFindingIds,
     stage: input.exploreExpansion ? 'record-expansion' : 'record',
     recordLogPath: recordAgentLogPath(input, input.exploreExpansion ? 'record-expansion' : 'record'),
-    validateBrowserEvidence: (_findingId, files) => validateRecordBrowserEvidence(input.repoPath, files),
+    browserPlans,
+    verifyBrowserReplay: async (findingId, plan, httpEvidence, attempt, signal) => {
+      const resolution = await resolveVariables(
+        findingId,
+        {
+          ...configuredReplayDefinitions,
+          ...(await loadReplayVariableDefinitions(replayVariableDir, findingId)),
+        },
+        { browserPlan: plan },
+      );
+      if (resolution.diagnostics.some((item) => item.status !== 'resolved'))
+        return { error: 'Browser replay variables could not be refreshed.' };
+      return verifyBrowserReplay({
+        findingId,
+        plan,
+        httpEvidence,
+        attempt,
+        signal,
+        stage: input.exploreExpansion ? 'record-expansion' : 'record',
+        variables: resolution.values,
+        targetUrl: input.webUrl,
+        deliverablesDir: dir,
+        authStatePath: authStateFile(buildSessionMetadata(input)),
+      });
+    },
     verifyReplay: async (findingId, plan) => {
       let savedDefinitions: Record<string, ReplayVariableDefinition>;
       try {
@@ -1288,11 +1324,11 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
       } catch {
         return { error: 'Could not read replay variable file.' };
       }
-      const resolution = resolveReplayVariables({
-        definitions: { ...configuredReplayDefinitions, ...savedDefinitions },
-        baseUrl: input.webUrl,
-        responseBodies: await loadReplayResponseBodies(dir),
-      });
+      const resolution = await resolveVariables(
+        findingId,
+        { ...configuredReplayDefinitions, ...savedDefinitions },
+        { httpPlan: plan },
+      );
       const variableFailures = resolution.diagnostics.filter((diagnostic) => diagnostic.status !== 'resolved');
       if (variableFailures.length) {
         return {
@@ -1399,6 +1435,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           entry.verification_method = 'other';
           entry.http_evidence_reason = verdict?.reason ?? 'No replay verdict was recorded; failure review is required.';
           delete entry.http_replay_verification;
+          delete entry.browser_verification;
         }
       }
       await atomicWrite(sourceCollectorPath, `${JSON.stringify(sourceEntries, null, 2)}\n`);
@@ -1447,6 +1484,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
           entry.verification_method = 'other';
           entry.http_evidence_reason = verdict?.reason ?? 'No replay verdict was recorded; failure review is required.';
           delete entry.http_replay_verification;
+          delete entry.browser_verification;
         }
       }
       if (entries !== sourceEntries)
@@ -1890,7 +1928,6 @@ export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMe
       skipped: true,
     };
 
-  const retryStarted = Date.now();
   const previous = JSON.parse(await fs.readFile(path.join(dir, 'record_verification.json'), 'utf8')) as RecordVerdict[];
   const previousById = new Map(previous.map((verdict) => [verdict.finding_id, verdict]));
   const container = getOrCreateContainer(input.workflowId, buildSessionMetadata(input), buildContainerConfig(input));
@@ -1915,6 +1952,11 @@ export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMe
   const plans = new Map(
     reviews.flatMap((review) => (review.revised_http_replay ? [[review.finding_id, review.revised_http_replay]] : [])),
   );
+  const browserPlans = new Map(
+    reviews.flatMap((review) =>
+      review.revised_browser_replay ? [[review.finding_id, review.revised_browser_replay] as const] : [],
+    ),
+  );
   const variableRoot = path.join(path.dirname(dir), 'scratchpad', 'replay-variables');
   const retryVariableDir = path.join(variableRoot, 'retry');
   const savedVariableDirs = [
@@ -1928,6 +1970,7 @@ export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMe
       definitions = { ...definitions, ...(await loadReplayVariableDefinitions(directory, findingId)) };
     return definitions;
   };
+  const resolveVariables = createReplayVariableResolver(dir, input.webUrl);
   const collector = createRecordCollector({
     deliverablesDir: dir,
     targetUrl: input.webUrl,
@@ -1944,17 +1987,39 @@ export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMe
         updates,
         Object.keys(configured),
         await loadSavedDefinitions(findingId),
+        browserPlans.get(findingId),
       ),
     xssFindingIds,
     stage: 'record-retry',
     recordLogPath: recordAgentLogPath(input, 'record-retry'),
-    validateBrowserEvidence: (_findingId, files) => validateRecordBrowserEvidence(input.repoPath, files, retryStarted),
-    verifyReplay: async (findingId, plan) => {
-      const resolution = resolveReplayVariables({
-        definitions: { ...configured, ...(await loadSavedDefinitions(findingId)) },
-        baseUrl: input.webUrl,
-        responseBodies: await loadReplayResponseBodies(dir),
+    browserPlans,
+    verifyBrowserReplay: async (findingId, plan, httpEvidence, attempt, signal) => {
+      const resolution = await resolveVariables(
+        findingId,
+        { ...configured, ...(await loadSavedDefinitions(findingId)) },
+        { browserPlan: plan },
+      );
+      if (resolution.diagnostics.some((item) => item.status !== 'resolved'))
+        return { error: 'Browser replay variables could not be refreshed.' };
+      return verifyBrowserReplay({
+        findingId,
+        plan,
+        httpEvidence,
+        attempt,
+        signal,
+        stage: 'record-retry',
+        variables: resolution.values,
+        targetUrl: input.webUrl,
+        deliverablesDir: dir,
+        authStatePath: authStateFile(buildSessionMetadata(input)),
       });
+    },
+    verifyReplay: async (findingId, plan) => {
+      const resolution = await resolveVariables(
+        findingId,
+        { ...configured, ...(await loadSavedDefinitions(findingId)) },
+        { httpPlan: plan },
+      );
       const variableFailures = resolution.diagnostics.filter((item) => item.status !== 'resolved');
       if (variableFailures.length)
         return {
@@ -2039,7 +2104,8 @@ export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMe
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     const verified = new Set(verifiedFinalIds);
-    for (const id of await applyRecordRetryEvidence(deliverablesPath, retryVerdicts, plans)) verified.add(id);
+    for (const id of await applyRecordRetryEvidence(deliverablesPath, retryVerdicts, plans, browserPlans))
+      verified.add(id);
     await atomicWrite(
       path.join(deliverablesPath, 'record_verified_finding_ids.json'),
       `${JSON.stringify([...verified].sort(), null, 2)}\n`,
