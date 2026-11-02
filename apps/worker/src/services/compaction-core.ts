@@ -163,6 +163,7 @@ export function deepRemapStrings(value: unknown, gapMap: ReadonlyMap<string, str
         'reproduction_script',
         'http_replay',
         'http_replay_verification',
+        'browser_verification',
         'http_evidence_receipts',
         'http_evidence_ids',
         'reproduction_capture_ids',

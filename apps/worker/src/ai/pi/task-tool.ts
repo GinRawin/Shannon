@@ -6,6 +6,8 @@
 
 /** Generic child-session delegation for the pi harness. */
 
+import { appendFile } from 'node:fs/promises';
+import path from 'node:path';
 import { type AssistantMessage, type Model, Type } from '@earendil-works/pi-ai';
 import {
   createAgentSession,
@@ -22,7 +24,13 @@ import { classifyProviderFailure, PentestError } from '../../services/error-hand
 import { ErrorCode } from '../../types/errors.js';
 import { PI_RETRY_SETTINGS } from './retry-settings.js';
 import { TraceEmitter } from './trace-emitter.js';
-import { providerTurnError, type SafeProviderTurnDetails, safeProviderTurnDetails } from './turn-error.js';
+import {
+  providerTurnError,
+  type SafeExecutionFailureDetails,
+  type SafeProviderTurnDetails,
+  safeExecutionFailureDetails,
+  safeProviderTurnDetails,
+} from './turn-error.js';
 
 export interface TaskToolContext {
   readonly cwd: string;
@@ -35,8 +43,9 @@ export interface TaskToolContext {
   readonly parentAgentName: LoggableAgentName;
   readonly workflowLogPath?: string | undefined;
   readonly onDelegationStart?: ((child: string) => Promise<void>) | undefined;
-  /** A failed child must also fail its parent attempt rather than produce a successful partial report. */
+  /** Unresolved child failures fail the parent; an explicit successful retry resolves only its own failure. */
   readonly onFailure?: (error: PentestError, details?: SafeProviderTurnDetails) => void;
+  readonly onRecovery?: (error: PentestError) => void;
   readonly cancellationSignal?: AbortSignal | undefined;
   readonly onUsage?: (usage: {
     readonly cost: number;
@@ -94,6 +103,15 @@ function createChildNamer(): (description: unknown) => string {
 export function createTaskTool(config: TaskToolContext): ToolDefinition {
   const nameChild = createChildNamer();
   const logPath = config.workflowLogPath;
+  const failures = new Map<string, { error: PentestError; retryOf?: string }>();
+
+  const resolveFailure = (taskId: string): void => {
+    const failure = failures.get(taskId);
+    if (failure === undefined) return;
+    failures.delete(taskId);
+    config.onRecovery?.(failure.error);
+    if (failure.retryOf !== undefined) resolveFailure(failure.retryOf);
+  };
 
   return defineTool({
     name: 'task',
@@ -108,16 +126,23 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
       'Pass all necessary context in the "prompt" parameter — the sub-agent cannot see your conversation history.',
       'The sub-agent can use read, grep, find, ls, write, and bash, plus HTTP evidence tools when provided. It cannot call task or verdict collector tools. Tell it to return capture IDs with its proof.',
       'You can launch multiple task tool calls in a single message to run sub-tasks in parallel.',
+      'If a task fails, retry or reassign the same required work with retry_of set to the task ID returned in its failure. A successful retry clears that failure; unrelated tasks do not. Unresolved failures prevent the parent stage from succeeding.',
     ],
     parameters: Type.Object({
       prompt: Type.String({
         description: 'The task for the sub-agent to perform. Include all necessary context.',
       }),
       description: Type.Optional(Type.String({ description: 'A short (3-5 word) description of the task.' })),
+      retry_of: Type.Optional(
+        Type.String({ description: 'Task ID of the failed task whose required work this retry replaces.' }),
+      ),
     }),
-    async execute(_toolCallId, params) {
+    async execute(toolCallId, params) {
       // Assign the identity synchronously, before any await, so concurrent siblings can't race.
       const child = nameChild(params.description);
+      if (params.retry_of !== undefined && !failures.has(params.retry_of)) {
+        return textResult('[Invalid retry_of: use the task ID returned by an unresolved failed task.]');
+      }
       const emitter = logPath
         ? new TraceEmitter(logPath, { kind: 'child', parent: config.parentAgentName, child })
         : undefined;
@@ -138,6 +163,7 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
       let providerFailure: SafeProviderTurnDetails | undefined;
       let compactionFailed = false;
       let executionFailure: PentestError | undefined;
+      let failureDetails: SafeExecutionFailureDetails | undefined;
 
       const abortChildSession = (): void => {
         void subSession?.abort().catch(() => {
@@ -173,6 +199,7 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
           if (event.type === 'compaction_end' && !event.aborted && !event.willRetry && event.errorMessage) {
             compactionFailed = true;
             failed = true;
+            failureDetails = safeExecutionFailureDetails(event.errorMessage);
             executionFailure = new PentestError(
               'Child context compaction failed.',
               'unknown',
@@ -195,6 +222,7 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
           turns += 1;
           const message = event.message as AssistantMessage | undefined;
           if (message?.role === 'assistant' && message.stopReason === 'error') {
+            failed = true;
             providerFailure = safeProviderTurnDetails(message, config.model.contextWindow);
             executionFailure = providerTurnError(message, 'Child agent error', config.model.contextWindow);
           }
@@ -210,10 +238,12 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
           await subSession.prompt(params.prompt);
         } catch (error) {
           failed = true;
+          failureDetails ??= safeExecutionFailureDetails(error);
           executionFailure ??= childTaskError(error);
         }
         if (subSession.state.errorMessage !== undefined) {
           failed = true;
+          failureDetails ??= safeExecutionFailureDetails(subSession.state.errorMessage);
           executionFailure ??= childTaskError(new Error(subSession.state.errorMessage));
         }
 
@@ -228,6 +258,7 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
         });
       } catch (error) {
         fatalFailure = true;
+        failureDetails ??= safeExecutionFailureDetails(error);
         executionFailure ??= childTaskError(error);
       } finally {
         config.cancellationSignal?.removeEventListener('abort', onCancellation);
@@ -240,34 +271,47 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
         await emitter?.flush();
         return textResult(CHILD_CANCELLED_TEXT);
       }
-      // `fatalFailure` means the child session itself never came up (createAgentSession threw), so
-      // there is no session result to hand back, and this rethrows, which pi surfaces to the parent
-      // as a failed tool call. `failed` means the session ran but ended in error; that gets a normal
-      // text result instead, so the parent model sees the failure and can decide how to proceed.
-      if (fatalFailure) {
-        console.warn('Child task failed', { child, stage: 'create-session', turns, operations });
-        emitter?.sessionFailure('CHILD_TASK_FAILED', durationMs);
-        await emitter?.flush();
-        const failure = executionFailure ?? childTaskError(new Error(CHILD_FAILURE_TEXT));
-        config.onFailure?.(failure, providerFailure);
-        throw failure;
-      }
-      if (failed) {
-        console.warn('Child task failed', {
+      if (fatalFailure || failed) {
+        const stage = fatalFailure ? 'create-session' : compactionFailed ? 'compaction' : 'prompt';
+        const diagnostic = {
           child,
-          stage: compactionFailed ? 'compaction' : 'prompt',
+          stage,
           turns,
           operations,
           ...(providerFailure !== undefined && { providerTurn: providerFailure }),
-        });
+          ...(failureDetails !== undefined && { execution: failureDetails }),
+        };
+        console.warn('Child task failed', diagnostic);
         emitter?.sessionFailure('CHILD_TASK_FAILED', durationMs);
         await emitter?.flush();
         const failure = executionFailure ?? childTaskError(new Error(CHILD_FAILURE_TEXT));
+        failures.set(toolCallId, {
+          error: failure,
+          ...(params.retry_of !== undefined && { retryOf: params.retry_of }),
+        });
         config.onFailure?.(failure, providerFailure);
+        // Persist before the parent's failure handling can roll back its uncommitted output.
+        try {
+          const dir = process.env.SHANNON_DELIVERABLES_DIR ?? path.join(config.cwd, '.shannon', 'deliverables');
+          await appendFile(
+            path.join(dir, 'error.log'),
+            `${JSON.stringify({
+              timestamp: new Date().toISOString(),
+              agent: config.parentAgentName,
+              error: { code: failure.code, category: failure.providerCategory, retryable: failure.retryable },
+              ...diagnostic,
+            })}\n`,
+          );
+        } catch {
+          // Best-effort diagnostics must not replace the original failure.
+        }
         const reason = providerFailure?.providerCategory ?? (compactionFailed ? 'compaction' : undefined);
-        return textResult(reason ? `${CHILD_FAILURE_TEXT} (${reason})` : CHILD_FAILURE_TEXT);
+        return textResult(
+          `${CHILD_FAILURE_TEXT}${reason ? ` (${reason})` : ''}\nTask ID: ${toolCallId}\nRetry or reassign this required work using task with retry_of: ${JSON.stringify(toolCallId)}. This failure remains unresolved until that retry succeeds.`,
+        );
       }
 
+      if (params.retry_of !== undefined) resolveFailure(params.retry_of);
       emitter?.sessionComplete(durationMs, turns, operations);
       await emitter?.flush();
       return textResult(resultText || '[Sub-agent produced no output]');

@@ -20,6 +20,28 @@ const StepSchema = Type.Object({
   headers: Type.Optional(Type.Record(Type.String(), Type.String())),
   body: Type.Optional(Type.String()),
   body_json: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  multipart: Type.Optional(
+    Type.Array(
+      Type.Object(
+        {
+          name: Type.String({ minLength: 1, pattern: '^[A-Za-z0-9_.-]+$' }),
+          value: Type.String({
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: literal runtime placeholder syntax.
+            description: 'Literal field value or file contents; supports ${VARIABLE} substitution.',
+          }),
+          filename: Type.Optional(Type.String({ minLength: 1, pattern: '^[A-Za-z0-9_.-]+$' })),
+          content_type: Type.Optional(Type.String({ pattern: '^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$' })),
+        },
+        { additionalProperties: false },
+      ),
+      {
+        minItems: 1,
+        maxItems: 20,
+        description:
+          'Multipart fields. For a file part, set filename and optionally content_type; at most one file part is supported. Do not set a Content-Type header; curl creates the boundary.',
+      },
+    ),
+  ),
   follow_redirects: Type.Optional(Type.Boolean()),
   insecure: Type.Optional(Type.Boolean()),
   expect: Type.Optional(
@@ -41,6 +63,7 @@ const StepSchema = Type.Object({
 });
 
 export const HttpReplaySchema = Type.Object({
+  setup: Type.Optional(Type.Array(StepSchema, { maxItems: 20 })),
   steps: Type.Array(StepSchema, { minItems: 1, maxItems: 50 }),
   cleanup: Type.Optional(Type.Array(StepSchema, { maxItems: 20 })),
 });
@@ -51,6 +74,7 @@ export interface HttpReplayStep {
   headers?: Record<string, string>;
   body?: string;
   body_json?: Record<string, unknown>;
+  multipart?: Array<{ name: string; value: string; filename?: string; content_type?: string }>;
   follow_redirects?: boolean;
   insecure?: boolean;
   expect?: { status: number; body_contains: string };
@@ -58,6 +82,7 @@ export interface HttpReplayStep {
   save_headers?: Record<string, string>;
 }
 export interface HttpReplayPlan {
+  setup?: HttpReplayStep[];
   steps: HttpReplayStep[];
   cleanup?: HttpReplayStep[];
 }
@@ -73,12 +98,60 @@ export function replayPlanDigest(plan: HttpReplayPlan): string {
   return createHash('sha256').update(JSON.stringify(plan)).digest('hex');
 }
 
+/** Reject plans whose source request was not fully translated into replay fields. */
+export function replayPlanError(plan: HttpReplayPlan): string | undefined {
+  if (!Value.Check(HttpReplaySchema, plan)) return 'Replay plan does not match the supported HTTP request schema.';
+  for (const [index, step] of [...(plan.setup ?? []), ...plan.steps, ...(plan.cleanup ?? [])].entries()) {
+    const label = `Request ${index + 1}`;
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal runtime placeholder syntax.
+    if (!step.url.startsWith('${BASE_URL}')) return `${label} URL must begin with \${BASE_URL}.`;
+    if (step.follow_redirects) return `${label} cannot follow redirects during replay.`;
+    const serialized = JSON.stringify({
+      url: step.url,
+      headers: step.headers,
+      body: step.body,
+      body_json: step.body_json,
+      multipart: step.multipart,
+      expect: step.expect,
+    });
+    if (/\[[A-Z][A-Z0-9_ -]*\]|\{\{[^{}]+\}\}/.test(serialized))
+      return `${label} contains an unresolved placeholder; replace it with a literal or a \${VARIABLE}.`;
+    if (Number('body' in step) + Number('body_json' in step) + Number('multipart' in step) > 1)
+      return `${label} must use only one request body format.`;
+    if (step.body?.startsWith('--')) {
+      const boundary = step.body.match(/^--([^\r\n]+)\r?\n/)?.[1];
+      const contentType = Object.entries(step.headers ?? {}).find(
+        ([name]) => name.toLowerCase() === 'content-type',
+      )?.[1];
+      const declared = contentType?.match(/(?:^|;)\s*boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i);
+      if (
+        boundary &&
+        (!contentType ||
+          !/^multipart\/form-data\s*;/i.test(contentType) ||
+          (declared?.[1] ?? declared?.[2]) !== boundary)
+      )
+        return `${label} has a raw multipart body without a matching Content-Type boundary; use multipart fields instead.`;
+    }
+    if (step.multipart) {
+      if (step.multipart.filter((part) => part.filename !== undefined).length > 1)
+        return `${label} multipart supports at most one file part.`;
+      if (step.multipart.some((part) => part.content_type && !part.filename))
+        return `${label} content_type is only supported on a multipart file part.`;
+      if (Object.keys(step.headers ?? {}).some((name) => name.toLowerCase() === 'content-type'))
+        return `${label} must omit Content-Type for multipart; curl supplies the boundary.`;
+    }
+  }
+  if (!plan.steps.some((step) => step.expect?.body_contains))
+    return 'At least one request step must assert a concrete impact status and body substring.';
+  return undefined;
+}
+
 /** Exported plans must not carry literal operator authentication from a test session. */
 export function hasLiteralReplayAuthentication(plan: HttpReplayPlan): boolean {
-  return [...plan.steps, ...(plan.cleanup ?? [])].some((step) =>
+  return [...(plan.setup ?? []), ...plan.steps, ...(plan.cleanup ?? [])].some((step) =>
     Object.entries(step.headers ?? {}).some(
       ([name, value]) =>
-        /authorization|cookie|token|session|secret|api.?key/i.test(name) && !/\$\{[A-Z][A-Z0-9_]*\}/.test(value),
+        /authorization|cookie|token|session|secret|api.?key/i.test(name) && !/\$\{[A-Za-z][A-Za-z0-9_]*\}/.test(value),
     ),
   );
 }
@@ -87,13 +160,14 @@ export function hasLiteralReplayAuthentication(plan: HttpReplayPlan): boolean {
 export function containsReplaySecret(plan: HttpReplayPlan, secrets: readonly string[]): boolean {
   const values: string[] = [];
   const visit = (value: unknown): void => {
-    if (typeof value === 'string') values.push(value.replace(/\$\{[A-Z][A-Z0-9_]*\}/g, ''));
+    if (typeof value === 'string') values.push(value.replace(/\$\{[A-Za-z][A-Za-z0-9_]*\}/g, ''));
     else if (Array.isArray(value)) value.forEach(visit);
     else if (value && typeof value === 'object') Object.values(value).forEach(visit);
   };
-  for (const step of [...plan.steps, ...(plan.cleanup ?? [])]) {
+  for (const step of [...(plan.setup ?? []), ...plan.steps, ...(plan.cleanup ?? [])]) {
     visit(step.headers);
     visit(step.body_json);
+    visit(step.multipart);
     visit(step.expect?.body_contains);
     if (step.body) {
       try {
@@ -143,23 +217,26 @@ VARIABLES = ("BASE_URL", "BEARER_TOKEN", "COOKIE", "USERNAME", "PASSWORD", "OTP"
 os.umask(0o077)
 def interpolate(value, variables):
     def replace(match):
-        name = match.group(1)
+        name = match.group(1).upper()
         if name not in variables or variables[name] == "":
             raise ValueError("Missing variable: " + name)
         return variables[name]
-    return re.sub(r"\$\{([A-Z][A-Z0-9_]*)\}", replace, value)
+    return re.sub(r"\$\{([A-Za-z][A-Za-z0-9_]*)\}", replace, value)
 
 def execute_step(step, variables, directory, index):
     prefix = directory / ("%03d" % index)
     url = interpolate(step["url"], variables)
-    if not re.match(r"^\u0024\{BASE_URL\}(?:[/?#]|$)", step["url"]) or not re.match(r"^https?://", url):
+    from urllib.parse import urlsplit
+    base = urlsplit(variables["BASE_URL"])
+    parsed = urlsplit(url)
+    if not step["url"].startswith("\u0024{BASE_URL}") or not re.match(r"^https?://", url) or parsed.scheme not in ("http", "https") or parsed.netloc != base.netloc or parsed.scheme != base.scheme or parsed.username or parsed.password:
         raise ValueError("Request URLs must start with \u0024{BASE_URL} and resolve to HTTP(S)")
     args = ["curl", "--disable", "--silent", "--show-error", "--globoff", "--connect-timeout", "15", "--max-time", "60",
             "--request", step["method"], "--url", url, "--trace", str(prefix) + ".trace",
             "--dump-header", str(prefix) + ".headers", "--output", str(prefix) + ".body", "--write-out", "%{http_code}"]
     headers = dict(step.get("headers", {}))
-    if "body" in step and "body_json" in step:
-        raise ValueError("Choose body or body_json, not both")
+    if sum(key in step for key in ("body", "body_json", "multipart")) > 1:
+        raise ValueError("Choose only one of body, body_json, or multipart")
     def json_values(value):
         if isinstance(value, str): return interpolate(value, variables)
         if isinstance(value, list): return [json_values(item) for item in value]
@@ -173,12 +250,35 @@ def execute_step(step, variables, directory, index):
         value = interpolate(value, variables)
         if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_|~-]+", key) or "\r" in value or "\n" in value:
             raise ValueError("Invalid header name or newline in header value")
-        args += ["--header", key + ": " + value]
-    if "body" in step or "body_json" in step:
+        # curl's Header; syntax transmits an explicitly empty header. Header:
+        # has different semantics for custom headers and can remove it entirely.
+        args += ["--header", key + (";" if value == "" else ": " + value)]
+    if "multipart" in step:
+        parts = step["multipart"]
+        if not parts or sum("filename" in part for part in parts) > 1:
+            raise ValueError("Multipart replay requires parts and at most one file part")
+        payload = b""
+        for part in parts:
+            name = part["name"]
+            value = interpolate(part["value"], variables)
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+                raise ValueError("Invalid multipart field name")
+            if "filename" in part:
+                filename = part["filename"]
+                if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
+                    raise ValueError("Invalid multipart filename")
+                content_type = part.get("content_type", "application/octet-stream")
+                if not re.fullmatch(r"[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+", content_type):
+                    raise ValueError("Invalid multipart content type")
+                payload = value.encode()
+                args += ["--form", name + "=@-;filename=" + filename + ";type=" + content_type]
+            else:
+                args += ["--form-string", name + "=" + value]
+    elif "body" in step or "body_json" in step:
         # stdin prevents curl's @file syntax from reading operator files.
         args += ["--data-binary", "@-"]
     if step["method"] == "HEAD": args += ["--head"]
-    if step.get("follow_redirects"): args += ["--location", "--max-redirs", "10"]
+    if step.get("follow_redirects"): raise ValueError("Redirects are not supported by HTTP replay")
     if step.get("insecure"): args += ["--insecure"]
     result = subprocess.run(args, input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=70)
     pathlib.Path(str(prefix) + ".meta.json").write_text(json.dumps({"exit_code": result.returncode, "captured_at": datetime.now(timezone.utc).isoformat(), "curl_arguments": args[1:], "cwd": os.getcwd(), "stdin_base64": base64.b64encode(payload).decode()}))
@@ -217,6 +317,7 @@ def run_entry(entry, root):
     directory = root / entry["finding_id"]
     directory.mkdir(parents=True, exist_ok=False)
     variables = {name: os.environ.get(name, "") for name in VARIABLES}
+    variables.update(json.loads(os.environ.get("SHANNON_REPLAY_VARIABLES", "{}")))
     if not variables["BASE_URL"]: variables["BASE_URL"] = entry["base_url"]
     plan = entry["plan"]
     requests = assertions = 0
@@ -224,6 +325,9 @@ def run_entry(entry, root):
     try:
         if not any(step.get("expect", {}).get("body_contains") for step in plan["steps"]):
             raise ValueError("At least one impact assertion is required")
+        for step in plan.get("setup", []):
+            requests += 1
+            execute_step(step, variables, directory, requests)
         for step in plan["steps"]:
             requests += 1
             assertions += int(execute_step(step, variables, directory, requests))
@@ -235,7 +339,8 @@ def run_entry(entry, root):
                 requests += 1
                 execute_step(step, variables, directory, requests)
             except Exception as exc:
-                error = "Cleanup failed: " + str(exc)
+                cleanup_error = "Cleanup failed: " + str(exc)
+                error = cleanup_error if error is None else error + "; " + cleanup_error
     passed = error is None and assertions > 0
     receipt = {"passed": passed, "request_count": requests, "assertion_count": assertions, "error": error}
     (directory / "result.json").write_text(json.dumps(receipt, indent=2) + "\n")
@@ -257,11 +362,7 @@ export async function verifyHttpReplay(args: {
   targetUrl: string;
   secrets?: readonly string[];
 }): Promise<{ verification?: HttpReplayVerification; error?: string; evidence?: HttpEvidenceReceipt[] }> {
-  if (
-    !Value.Check(HttpReplaySchema, args.plan) ||
-    !args.plan.steps.some((step) => step.expect?.body_contains) ||
-    !/^(INJ|XSS|AUTH|AUTHZ|SSRF|MISC)-\d{2,}$/.test(args.findingId)
-  ) {
+  if (replayPlanError(args.plan) !== undefined || !/^(INJ|XSS|AUTH|AUTHZ|SSRF|MISC)-\d{2,}$/.test(args.findingId)) {
     return { error: 'Invalid HTTP replay plan or finding ID.' };
   }
   const runDir = path.join(args.deliverablesDir, 'http-replay-verifications', `${Date.now()}-${randomUUID()}`);
@@ -270,7 +371,8 @@ export async function verifyHttpReplay(args: {
   const entries = [{ finding_id: args.findingId, base_url: baseUrl, plan: args.plan }];
   const source = `${HTTP_REPLAY_PYTHON}\nsys.exit(run(json.loads(base64.b64decode('${Buffer.from(JSON.stringify(entries)).toString('base64')}'))))\n`;
   const environment: NodeJS.ProcessEnv = { ...process.env, OUTPUT_DIR: runDir };
-  for (const name of REPLAY_VARIABLES) environment[name] = args.variables[name] ?? (name === 'BASE_URL' ? baseUrl : '');
+  for (const name of REPLAY_VARIABLES) environment[name] = name === 'BASE_URL' ? baseUrl : (args.variables[name] ?? '');
+  environment.SHANNON_REPLAY_VARIABLES = JSON.stringify({ ...args.variables, BASE_URL: baseUrl });
   let code: number;
   try {
     code = await new Promise<number>((resolve, reject) => {

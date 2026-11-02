@@ -24,17 +24,18 @@ await symlink(`${root}/apps/worker/node_modules`, `${temporary}/node_modules`);
 const load = (name) => import(pathToFileURL(`${temporary}/dist/${name}.js`));
 const { parseCurlTrace } = await load('services/http-capture');
 const { captureHttpRequest, readVerifiedHttpEvidence } = await load('services/capture-http-request');
-const { verifyHttpReplay, replayPlanDigest, hasVerifiedReplay, containsReplaySecret } = await load('services/http-replay');
+const { verifyHttpReplay, replayPlanDigest, hasVerifiedReplay, containsReplaySecret, replayPlanError } = await load('services/http-replay');
 const { attachHttpEvidence, configuredCaptureRedactions, renderCapturedHttpEvidence, writeReproductionScript } = await load('services/http-evidence');
 const { buildRenumberMap } = await load('services/renumber-core');
 const { deepRemapStrings } = await load('services/compaction-core');
 const { createExploitCollector } = await load('collectors/exploit-collector');
+const { createRecordCollector } = await load('collectors/record-collector');
+const { loadReplayVariables, updateReplayVariables } = await load('services/replay-variables');
 const { buildAddFindingSchema, createFindingCollector } = await load('collectors/finding-collector');
 const { renderReport } = await load('services/report-renderer');
 const { adaptReportToTypst } = await load('services/report-json-adapter');
 const { surfaceReportOutputs } = await load('services/report-output-surface');
 const { finalizeReport } = await load('services/report-finalization');
-const { registerCaptureBridge } = await load('services/http-capture-bridge');
 const { snapshotCurlInvocation } = await load('services/curl-invocation');
 const { describeArgumentInput, describeFileInput, describeVerificationInputs } = await load('services/reproduction-inputs');
 
@@ -149,6 +150,29 @@ try {
 
   const plan = { steps: [{ method: 'GET', url: '${BASE_URL}/protected', headers: { Authorization: 'Bearer ${BEARER_TOKEN}', 'X-Evidence': 'INJ-02' }, expect: { status: 200, body_contains: 'private-audit-record INJ-02' } }] };
   const verify = (id, plan, variables = {}) => verifyHttpReplay({ findingId: id, plan, variables, deliverablesDir: dir, targetUrl: target });
+  await check('replay preserves empty headers, variable paths and the configured target', async () => {
+    const replay = { steps: [{ method: 'GET', url: '${BASE_URL}${PATH}', headers: { yapi: '' }, expect: { status: 200, body_contains: 'ab' } }] };
+    const result = await verify('AUTH-90', replay, { PATH: '/hex', BASE_URL: 'http://127.0.0.1:1' });
+    assert.ok(result.verification, result.error);
+    assert.equal(received.at(-1).headers.yapi, '');
+    const rejected = await verify('AUTH-91', replay, { PATH: '@127.0.0.1:1/hex' });
+    assert.ok(rejected.error);
+  });
+  await check('multipart replay sends matching boundary and file content', async () => {
+    const replay = { steps: [{ method: 'POST', url: '${BASE_URL}/hex', multipart: [{ name: 'path', value: 'fixture' }, { name: 'file', filename: 'proof.txt', content_type: 'text/plain', value: 'upload fixture' }], expect: { status: 200, body_contains: 'ab' } }] };
+    const result = await verify('AUTH-92', replay);
+    assert.ok(result.verification, result.error);
+    const request = received.at(-1);
+    const boundary = /boundary=([^;]+)/.exec(request.headers['content-type'])?.[1];
+    assert.ok(boundary);
+    assert.ok(request.body.toString().includes(`--${boundary}`));
+    assert.match(request.body.toString(), /filename="proof.txt"/);
+    assert.match(request.body.toString(), /upload fixture/);
+    assert.ok(replayPlanError({ steps: [{ method: 'POST', url: '${BASE_URL}/hex', body: '--b\r\nfixture\r\n--b--\r\n', expect: { status: 200, body_contains: 'ab' } }] }));
+    assert.ok(replayPlanError({ steps: [{ method: 'POST', url: '${BASE_URL}/[PARAMS]', expect: { status: 200, body_contains: 'ab' } }] }));
+    assert.ok(replayPlanError({ steps: [{ method: 'POST', url: '${BASE_URL}/hex', headers: { 'Content-Type': 'multipart/form-data; boundary=b2' }, body: '--b\r\nfixture\r\n--b--\r\n', expect: { status: 200, body_contains: 'ab' } }] }));
+    assert.ok(replayPlanError({ steps: [{ method: 'GET', url: '${BASE_URL}/redirect', follow_redirects: true, expect: { status: 200, body_contains: 'ab' } }] }));
+  });
   await check('credential checks distinguish literal values from field names and endpoint names', async () => {
     const login = { steps: [{ method: 'POST', url: '${BASE_URL}/admin', body_json: { username: '${USERNAME}', password: '${PASSWORD}' }, expect: { status: 200, body_contains: 'private record' } }] };
     assert.equal(containsReplaySecret(login, ['admin', 'password', 'a']), false);
@@ -192,19 +216,96 @@ try {
     assert.match((await verify('MISC-02', mutation)).error, /Cleanup failed/);
     created = false;
   });
+  await check('setup and cleanup requests are both traced and cleaned up', async () => {
+    const replay = {
+      setup: [{ method: 'POST', url: '${BASE_URL}/create' }],
+      steps: [{ method: 'POST', url: '${BASE_URL}/create', expect: { status: 200, body_contains: 'created fixture record' } }],
+      cleanup: [{ method: 'DELETE', url: '${BASE_URL}/created' }],
+    };
+    const result = await verify('MISC-03', replay);
+    assert.ok(result.verification, result.error);
+    assert.equal(result.verification.request_count, 3);
+    assert.equal(result.evidence.length, 3);
+    assert.ok(result.evidence.every((receipt) => receipt.complete));
+    assert.equal(created, false);
+  });
 
   const exploit = { status: 'exploited', vulnerability_id: 'INJ-02', title: 'Private endpoint access', vulnerable_location: '/protected', overview: 'Fixture', severity: 'high', severity_rationale: 'Fixture', impact: 'Reads private record', exploitation_steps: ['Read record'], proof_of_impact: 'private-audit-record', verification_method: 'http', http_evidence_display: 'include', http_evidence_reason: 'The protected record response demonstrates unauthorized access.', http_replay: plan };
-  await check('collector rejects unverified/changed plans and accepts only its own execution receipt', async () => {
-    const collector = createExploitCollector({ vulnClass: 'injection', validIds: new Set(['INJ-02']), deliverablesDir: dir, targetUrl: target });
-    const add = collector.tools.find((tool) => tool.name === 'add_exploit');
-    const verifier = collector.tools.find((tool) => tool.name === 'verify_http_replay');
-    const status = (result) => JSON.parse(result.content[0].text).status;
-    assert.equal(status(await add.execute('one', exploit)), 'error');
-    assert.equal(status(await verifier.execute('verify', { vulnerability_id: 'INJ-02', plan, variables: { BEARER_TOKEN: 'good' } })), 'success');
-    const changed = structuredClone(exploit); changed.http_replay.steps[0].expect.body_contains = 'different';
-    assert.equal(status(await add.execute('changed', changed)), 'error');
-    assert.equal(status(await add.execute('valid', exploit)), 'success');
-    assert.ok(hasVerifiedReplay(collector.getAll()[0]));
+  const invoke = async (collector, name, input, signal) => {
+    const tool = collector.tools.find((tool) => tool.name === name);
+    assert.ok(tool, `Missing tool ${name}`);
+    return JSON.parse((await tool.execute('fixture-call', input, signal)).content[0].text);
+  };
+  const recordOptions = (directory, ids = ['INJ-02', 'INJ-03'], variables = { BEARER_TOKEN: 'good' }) => ({
+    deliverablesDir: directory, sourceDir: temporary, targetUrl: target, validIds: new Set(ids),
+    verificationPlans: new Map(ids.map((id) => [id, plan])),
+    verifyReplay: (findingId, savedPlan) => verifyHttpReplay({
+      findingId, plan: savedPlan, variables, deliverablesDir: directory, targetUrl: target,
+    }),
+  });
+  const verdict = (id, status, capture_ids) => ({
+    finding_id: id, status, capture_ids, reason: 'Fixture replay verdict',
+    frontend_status: 'not_found', frontend_url: null, frontend_trigger: null, frontend_reason: 'Fixture has no UI',
+  });
+  const evidenceEntry = (base, receipts) => ({
+    ...base, http_evidence_display: 'include', http_evidence_ids: receipts.map((item) => item.capture_id),
+    http_evidence_receipts: receipts,
+  });
+  await check('Exploit submits the exact observed request plan without an extra target replay', async () => {
+    const collector = createExploitCollector({ vulnClass: 'injection', validIds: new Set(['INJ-02']) });
+    const before = received.length;
+    assert.equal((await invoke(collector, 'add_exploit', exploit)).status, 'success');
+    assert.equal(received.length, before);
+    assert.equal(hasVerifiedReplay(collector.getAll()[0]), false);
+    assert.deepEqual(collector.tools.map((tool) => tool.name), ['add_exploit']);
+    const missing = { ...exploit }; delete missing.http_replay;
+    assert.equal((await invoke(createExploitCollector({ vulnClass: 'injection', validIds: new Set(['INJ-02']) }), 'add_exploit', missing)).status, 'error');
+  });
+  await check('Record requires its own passing host replay and rejects borrowed capture IDs', async () => {
+    const collector = createRecordCollector(recordOptions(dir));
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-02', 'verified', []))).status, 'error');
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-02', 'verified', proofEvidence.map((item) => item.capture_id)))).status, 'error');
+    const checked = await invoke(collector, 'verify_http_replay', { finding_id: 'INJ-02' });
+    assert.equal(checked.status, 'success', checked.message);
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-03', 'verified', checked.captures.map((item) => item.capture_id)))).status, 'error');
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-02', 'verified', checked.captures.map((item) => item.capture_id)))).status, 'verified');
+    assert.ok(collector.getAll()[0].http_replay_verification);
+    assert.deepEqual(collector.getAll()[0].http_evidence_receipts, checked.captures);
+  });
+  await check('Record can correct observed private variables after a failed replay and retry the unchanged plan', async () => {
+    const variableDir = `${temporary}/private-replay-variables`;
+    await mkdir(variableDir, { mode: 0o700 });
+    await writeFile(`${variableDir}/INJ-02.json`, JSON.stringify({ BEARER_TOKEN: 'bad' }), { mode: 0o600 });
+    const repairCollector = createRecordCollector({
+      ...recordOptions(dir),
+      inspectReplayVariables: async (findingId) => Object.keys(await loadReplayVariables(variableDir, findingId)).sort(),
+      repairReplayVariables: (findingId, savedPlan, updates) => updateReplayVariables(variableDir, findingId, savedPlan, updates),
+      verifyReplay: async (findingId, savedPlan) => {
+        const variables = await loadReplayVariables(variableDir, findingId);
+        return verifyHttpReplay({ findingId, plan: savedPlan, variables, deliverablesDir: dir, targetUrl: target });
+      },
+    });
+    assert.equal((await invoke(repairCollector, 'update_replay_variables', { finding_id: 'INJ-02', variables: { BEARER_TOKEN: 'good' } })).status, 'error');
+    const first = await invoke(repairCollector, 'verify_http_replay', { finding_id: 'INJ-02' });
+    assert.equal(first.status, 'error');
+    assert.ok(first.captures.length);
+    const inspected = await invoke(repairCollector, 'inspect_replay_variables', { finding_id: 'INJ-02' });
+    assert.deepEqual(inspected.saved_variable_names, ['BEARER_TOKEN']);
+    assert.doesNotMatch(JSON.stringify(inspected), /good|bad/);
+    const corrected = await invoke(repairCollector, 'update_replay_variables', { finding_id: 'INJ-02', variables: { BEARER_TOKEN: 'good' } });
+    assert.equal(corrected.status, 'success', corrected.message);
+    assert.deepEqual(corrected.updated_variable_names, ['BEARER_TOKEN']);
+    assert.doesNotMatch(JSON.stringify(corrected), /good|bad/);
+    assert.equal((await stat(`${variableDir}/INJ-02.json`)).mode & 0o777, 0o600);
+    const retry = await invoke(repairCollector, 'verify_http_replay', { finding_id: 'INJ-02' });
+    assert.equal(retry.status, 'success', retry.message);
+    assert.equal(retry.verification.assertion_count, 1);
+    assert.equal((await invoke(repairCollector, 'update_replay_variables', { finding_id: 'INJ-02', variables: { PATH: '/hex' } })).status, 'error');
+    const extracted = { steps: [
+      { method: 'POST', url: '${BASE_URL}/login', save_json: { TOKEN: 'data.token' } },
+      { method: 'GET', url: '${BASE_URL}/protected', headers: { Authorization: 'Bearer ${TOKEN}' }, expect: { status: 200, body_contains: 'private-audit-record' } },
+    ] };
+    await assert.rejects(updateReplayVariables(variableDir, 'INJ-02', extracted, { TOKEN: 'forged' }), /extracted from an earlier response/);
   });
   const renumbered = buildRenumberMap([{ ...exploit, http_evidence_receipts: proofEvidence, http_evidence_ids: proofEvidence.map((receipt) => receipt.capture_id), http_replay_verification: proof, reproduction_script: '# capture_curl INJ-02\ntrue' }], 'injection');
   await check('renumbering keeps replay payloads and verification digests unchanged', async () => {
@@ -377,129 +478,135 @@ try {
 
   const strictDir = `${temporary}/strict-deliverables`;
   await mkdir(strictDir);
-  const strictOptions = { vulnClass: 'injection', validIds: new Set(['INJ-02', 'INJ-03']), deliverablesDir: strictDir, targetUrl: target, requireHttpEvidence: true };
-  const strictCollector = createExploitCollector(strictOptions);
-  const invoke = async (collector, name, input, signal) => JSON.parse((await collector.tools.find((tool) => tool.name === name).execute('fixture-call', input, signal)).content[0].text);
-  const actualExploit = { ...exploit }; delete actualExploit.http_replay;
-  let actualReceipt;
-  await check('validation and capture are one invocation, with no automatic resend', async () => {
+  let actualReceipt, strictRenumbered;
+  const actualExploit = { ...exploit, http_replay: null, http_replay_unavailable_reason: 'Manual proof fixture' };
+  await check('Record captures one actual request; capture alone cannot assert verified impact', async () => {
+    const collector = createRecordCollector(recordOptions(strictDir));
     const before = received.filter((request) => request.url === '/create').length;
-    const result = await invoke(strictCollector, 'capture_http_request', { vulnerability_id: 'INJ-02', curl_arguments: ['-sS', '-X', 'POST', `${target}/create`] });
+    const result = await invoke(collector, 'capture_http_request', { finding_id: 'INJ-02', curl_arguments: ['-sS', '-X', 'POST', `${target}/create`] });
     assert.equal(result.status, 'success'); assert.equal(result.complete, true);
     assert.equal(received.filter((request) => request.url === '/create').length - before, 1);
-    assert.match(result.stdout, /created fixture record/);
     actualReceipt = result;
     const saved = await readVerifiedHttpEvidence(strictDir, result);
     assert.match(saved.exchanges[0].request, /^POST \/create HTTP/);
-    assert.match(saved.exchanges[0].response, /created fixture record/);
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-02', 'verified', [result.capture_id]))).status, 'error');
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-02', 'failed', [result.capture_id]))).status, 'failed');
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-02', 'failed', [result.capture_id]))).status, 'error');
   });
-  await check('success submissions without actual HTTP evidence are rejected', async () => {
-    assert.equal((await invoke(strictCollector, 'add_exploit', actualExploit)).status, 'error');
-    assert.equal(strictCollector.getAll().length, 0);
-  });
-  await check('capture IDs cannot be invented, reused from another collector, or assigned to another finding', async () => {
-    const selected = { ...actualExploit, http_evidence_ids: [actualReceipt.capture_id] };
-    assert.equal((await invoke(createExploitCollector(strictOptions), 'add_exploit', selected)).status, 'error');
-    assert.equal((await invoke(strictCollector, 'add_exploit', { ...selected, vulnerability_id: 'INJ-03' })).status, 'error');
-    assert.equal((await invoke(strictCollector, 'add_exploit', { ...selected, http_evidence_ids: ['00000000-0000-0000-0000-000000000000'] })).status, 'error');
-    assert.equal((await invoke(strictCollector, 'add_exploit', { ...selected, http_evidence_ids: [actualReceipt.capture_id, actualReceipt.capture_id] })).status, 'error');
-  });
-  await check('edited trace files cannot be submitted as actual validation evidence', async () => {
-    const file = `${strictDir}/${actualReceipt.file}`, original = await readFile(file, 'utf8');
-    await writeFile(file, original + ' ');
-    const rejected = await invoke(strictCollector, 'add_exploit', { ...actualExploit, http_evidence_ids: [actualReceipt.capture_id] });
-    assert.equal(rejected.status, 'error'); assert.match(rejected.message, /modified after capture/);
-    await writeFile(file, original);
-  });
-  await check('listing existing proof is read-only and valid submissions receive host-only receipts', async () => {
-    const before = received.length;
-    const listed = await invoke(strictCollector, 'list_http_evidence', { vulnerability_id: 'INJ-02' });
-    assert.equal(listed.total, 1); assert.equal(received.length, before);
-    assert.equal(listed.flows[0].capture_id, actualReceipt.capture_id);
-    assert.equal((await invoke(strictCollector, 'add_exploit', { ...actualExploit, http_evidence_ids: [actualReceipt.capture_id], http_evidence_receipts: [{ sha256: 'forged' }] })).status, 'success');
-    assert.equal(strictCollector.getAll()[0].http_evidence_receipts[0].sha256, actualReceipt.sha256);
-  });
-  await check('failed transfers preserve partial records and cannot count as complete evidence', async () => {
-    const collector = createExploitCollector(strictOptions);
-    const failed = await invoke(collector, 'capture_http_request', { vulnerability_id: 'INJ-02', curl_arguments: ['-sS', '--connect-timeout', '1', 'http://127.0.0.1:1/'] });
-    assert.equal(failed.status, 'success'); assert.equal(failed.complete, false); assert.notEqual(failed.exit_code, 0);
-    await stat(`${strictDir}/${failed.file}`);
-    assert.equal((await invoke(collector, 'add_exploit', { ...actualExploit, http_evidence_ids: [failed.capture_id] })).status, 'error');
-  });
-  await check('DOM-only proof is explicit, does not send a replacement request, and records its limitation', async () => {
-    const collector = createExploitCollector(strictOptions), before = received.length;
-    assert.equal((await invoke(collector, 'add_exploit', { ...actualExploit, verification_method: 'browser', http_evidence_display: 'omit', http_evidence_reason: 'Browser DOM execution proved by screenshot; no applicable HTTP response proves JavaScript execution.', reproduction_capture_ids: [] })).status, 'success');
+  await check('Record blocks unknown IDs, cross-origin requests, redirects, literal auth and absent plans', async () => {
+    const options = recordOptions(strictDir);
+    const collector = createRecordCollector(options), before = received.length;
+    assert.equal((await invoke(collector, 'verify_http_replay', { finding_id: 'INJ-99' })).status, 'error');
+    assert.equal((await invoke(collector, 'capture_http_request', { finding_id: 'INJ-99', curl_arguments: ['-sS', `${target}/hex`] })).status, 'error');
+    assert.equal((await invoke(collector, 'capture_http_request', { finding_id: 'INJ-02', curl_arguments: ['--url', 'https://other.invalid/'] })).status, 'error');
+    for (const saved of [undefined, { steps: [{ ...plan.steps[0], follow_redirects: true }] }, { steps: [{ ...plan.steps[0], headers: { Authorization: 'Bearer literal-secret' } }] }]) {
+      const entry = createRecordCollector({ ...options, verificationPlans: new Map(saved ? [['INJ-02', saved]] : []) });
+      assert.equal((await invoke(entry, 'verify_http_replay', { finding_id: 'INJ-02' })).status, 'error');
+    }
     assert.equal(received.length, before);
-    assert.deepEqual(collector.getAll()[0].http_evidence_receipts, []);
-    assert.equal((await invoke(strictCollector, 'add_exploit', { ...actualExploit, vulnerability_id: 'INJ-03', verification_method: 'browser', http_evidence_display: 'omit', http_evidence_reason: 'Browser DOM-only proof; see the original screenshot.', reproduction_capture_ids: [] })).status, 'success');
-    assert.equal((await invoke(createExploitCollector(strictOptions), 'add_exploit', { ...actualExploit, http_evidence_unavailable_reason: '  ' })).status, 'error');
+  });
+  await check('failed Record assertions retain diagnostic packets and never grant verified status', async () => {
+    const collector = createRecordCollector(recordOptions(strictDir, ['INJ-03'], { BEARER_TOKEN: 'bad' }));
+    const replay = await invoke(collector, 'verify_http_replay', { finding_id: 'INJ-03' });
+    assert.equal(replay.status, 'error'); assert.ok(replay.captures.length);
+    const ids = replay.captures.map((item) => item.capture_id);
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-03', 'verified', ids))).status, 'error');
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-03', 'failed', ids))).status, 'failed');
+  });
+  await check('Record checks frontend consistency and requires every replay packet', async () => {
+    const collector = createRecordCollector(recordOptions(strictDir));
+    const checked = await invoke(collector, 'verify_http_replay', { finding_id: 'INJ-02' });
+    assert.equal(checked.status, 'success');
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-02', 'verified', []))).status, 'error');
+    const input = verdict('INJ-02', 'verified', checked.captures.map((item) => item.capture_id));
+    assert.equal((await invoke(collector, 'record_verification', { ...input, frontend_status: 'available' })).status, 'error');
+    assert.equal((await invoke(collector, 'record_verification', { ...input, frontend_url: `${target}/` })).status, 'error');
+    assert.equal((await invoke(collector, 'record_verification', input)).status, 'verified');
+  });
+  await check('Record enforces three attempts and retains all failed diagnostics without an agent verdict', async () => {
+    const collector = createRecordCollector(recordOptions(strictDir, ['INJ-03'], { BEARER_TOKEN: 'bad' }));
+    const before = received.length;
+    for (let attempt = 0; attempt < 3; attempt++)
+      assert.equal((await invoke(collector, 'verify_http_replay', { finding_id: 'INJ-03' })).status, 'error');
+    const afterLimit = received.length;
+    assert.ok(afterLimit > before);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const denied = await invoke(collector, 'verify_http_replay', { finding_id: 'INJ-03' });
+      assert.equal(denied.status, 'error');
+      assert.match(denied.message, /limit/);
+    }
+    assert.equal(received.length, afterLimit, 'exhausted retries must not send additional target requests');
+    const failure = collector.getAll()[0];
+    assert.equal(failure.status, 'failed');
+    assert.equal(failure.failure_kind, 'retry_exhausted');
+    assert.equal(failure.attempts, 3);
+    assert.deepEqual(failure.replay_history.map((attempt) => attempt.attempt), [1, 2, 3]);
+    assert.ok(failure.replay_history.every((attempt) => attempt.error && attempt.capture_ids.length));
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-03', 'failed', []))).status, 'failed');
+    assert.equal(collector.getAll().length, 1, 'a submitted verdict replaces the automatic failure');
+  });
+  await check('Record serializes a finding replay and prevents resending after success', async () => {
+    let release, executions = 0;
+    const collector = createRecordCollector({
+      ...recordOptions(strictDir),
+      verifyReplay: async () => {
+        executions++;
+        await new Promise((resolve) => { release = resolve; });
+        return { error: 'fixture failure' };
+      },
+    });
+    const pending = invoke(collector, 'verify_http_replay', { finding_id: 'INJ-02' });
+    assert.equal((await invoke(collector, 'verify_http_replay', { finding_id: 'INJ-02' })).status, 'error');
+    assert.equal((await invoke(collector, 'record_verification', verdict('INJ-02', 'failed', []))).status, 'error');
+    assert.equal(executions, 1);
+    release();
+    await pending;
+    const successful = createRecordCollector(recordOptions(strictDir));
+    const replay = await invoke(successful, 'verify_http_replay', { finding_id: 'INJ-02' });
+    assert.equal(replay.status, 'success');
+    const before = received.length;
+    assert.equal((await invoke(successful, 'verify_http_replay', { finding_id: 'INJ-02' })).status, 'error');
+    assert.equal(received.length, before);
+    assert.equal((await invoke(successful, 'record_verification', verdict('INJ-02', 'verified', replay.captures.map((capture) => capture.capture_id)))).status, 'verified');
+    assert.equal(successful.getAll()[0].attempts, 1);
+  });
+  await check('failed transfers, cancellation and timeouts retain provenance without resending', async () => {
+    const failed = await captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-03', curlArguments: ['-sS', '--connect-timeout', '1', 'http://127.0.0.1:1/'] });
+    assert.equal(failed.receipt.complete, false); assert.notEqual(failed.receipt.exit_code, 0);
+    await stat(`${strictDir}/${failed.receipt.file}`);
+    const controller = new AbortController(); controller.abort(); const before = received.length;
+    await assert.rejects(captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-03', curlArguments: ['-sS', `${target}/hex`], signal: controller.signal }), /cancelled/);
+    assert.equal(received.length, before);
+    const slowBefore = received.filter((request) => request.url === '/slow').length;
+    const timed = await captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-03', curlArguments: ['-sS', `${target}/slow`], timeoutSeconds: 1 });
+    assert.equal(timed.receipt.exit_code, 124); assert.equal(timed.receipt.complete, false);
+    assert.match((await readVerifiedHttpEvidence(strictDir, timed.receipt)).exchanges[0].request, /GET \/slow HTTP/);
+    assert.equal(received.filter((request) => request.url === '/slow').length - slowBefore, 1);
   });
   await check('capture argv stays literal and cannot disable tracing using config, --, or --trace options', async () => {
     const before = received.length;
     for (const args of [['-K', '/tmp/fixture-curlrc'], ['-skK/tmp/fixture-curlrc'], ['--confi=/tmp/fixture-curlrc'], ['--', `${target}/hex`], ['--trace-ascii', '/tmp/trace'], ['curl', `${target}/hex`]]) {
-      assert.equal((await invoke(strictCollector, 'capture_http_request', { vulnerability_id: 'INJ-02', curl_arguments: args })).status, 'error');
+      await assert.rejects(captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-03', curlArguments: args }));
     }
     assert.equal(received.length, before);
     const result = await captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-03', curlArguments: ['-sSv', '--get', '--data-urlencode', 'payload=$(echo unwanted);`literal`', `${target}/hex`] });
-    const saved = await readVerifiedHttpEvidence(strictDir, result.receipt);
-    assert.ok(saved.exchanges[0].request.includes('%24%28echo'));
-    assert.equal(result.receipt.complete, true);
+    assert.ok((await readVerifiedHttpEvidence(strictDir, result.receipt)).exchanges[0].request.includes('%24%28echo'));
     const literal = await captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-03', curlArguments: ['-sS', '--data-raw', '--trace-ascii', `${target}/create`] });
-    assert.equal(literal.receipt.complete, true);
-    assert.equal(received.at(-1).body.toString(), '--trace-ascii');
+    assert.equal(literal.receipt.complete, true); assert.equal(received.at(-1).body.toString(), '--trace-ascii');
   });
-  await check('timeout keeps the original partial request and does not resend it', async () => {
-    const before = received.filter((request) => request.url === '/slow').length;
-    const timed = await captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-03', curlArguments: ['-sS', `${target}/slow`], timeoutSeconds: 1 });
-    assert.equal(timed.receipt.complete, false); assert.equal(timed.receipt.exit_code, 124);
-    const saved = await readVerifiedHttpEvidence(strictDir, timed.receipt);
-    assert.match(saved.exchanges[0].request, /GET \/slow HTTP/);
-    assert.equal(received.filter((request) => request.url === '/slow').length - before, 1);
-  });
-  await check('cancelled validation sends nothing and preserves large/binary response evidence', async () => {
-    const controller = new AbortController(); controller.abort();
-    const before = received.length;
-    assert.equal((await invoke(strictCollector, 'capture_http_request', { vulnerability_id: 'INJ-03', curl_arguments: ['-sS', `${target}/hex`] }, controller.signal)).status, 'error');
-    assert.equal(received.length, before);
-    const captured = await captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-03', curlArguments: ['-sS', `${target}/large`] });
-    assert.match(captured.stdout, /Tool output truncated/);
-    const saved = await readVerifiedHttpEvidence(strictDir, captured.receipt);
-    const raw = Buffer.from(saved.exchanges[0].response_base64, 'base64');
-    assert.deepEqual(raw.subarray(raw.indexOf('\r\n\r\n') + 4), Buffer.alloc(70000, 'Z'));
-  });
-  let strictRenumbered;
-  await check('renumbering preserves original capture identity and file checksums', async () => {
-    strictRenumbered = buildRenumberMap(strictCollector.getAll(), 'injection');
+  await check('renumbered and compacted evidence keeps original capture ownership and rejects tampering', async () => {
+    const source = evidenceEntry(actualExploit, [actualReceipt]);
+    strictRenumbered = buildRenumberMap([source], 'injection');
     assert.equal(strictRenumbered.renumbered[0].vulnerability_id, 'INJ-01');
-    assert.deepEqual(strictRenumbered.renumbered[0].http_evidence_receipts, strictCollector.getAll()[0].http_evidence_receipts);
     assert.equal(strictRenumbered.renumbered[0].http_evidence_receipts[0].finding_id, 'INJ-02');
-  });
-  await check('report attaches only selected original captures and rejects later evidence modifications', async () => {
-    await captureHttpRequest({ deliverablesDir: strictDir, findingId: 'INJ-02', curlArguments: ['-sS', `${target}/binary`] });
-    for (const [name, data] of Object.entries({ injection_exploit_collector: strictCollector.getAll(), injection_exploit_collector_renumbered: strictRenumbered.renumbered, injection_renumber_map: { map: Object.fromEntries(strictRenumbered.oldToNew) } })) {
-      await writeFile(`${strictDir}/${name}.json`, JSON.stringify(data));
-    }
-    for (const args of [['init'], ['add', '--', 'injection_exploit_collector.json', 'injection_exploit_collector_renumbered.json', 'injection_renumber_map.json'], ['commit', '-m', 'Actual proof fixture']]) {
-      const result = await run('git', args, { cwd: strictDir, env: gitEnv }); assert.equal(result.code, 0, result.stderr);
-    }
-    const input = [{ ...findings[0], finding_id: 'INJ-01' }, { ...findings[0], finding_id: 'INJ-02' }];
-    const report = await attachHttpEvidence(input, strictDir);
-    const section = report[0].additional_sections.find((section) => section.heading === '捕获的 HTTP 请求与响应');
-    assert.match(JSON.stringify(section), /POST \/create HTTP/);
-    assert.match(JSON.stringify(section), new RegExp(actualReceipt.capture_id));
-    assert.doesNotMatch(JSON.stringify(section), /GET \/binary HTTP/);
-    assert.match(JSON.stringify(report[1]), /Browser DOM-only proof/);
-    assert.ok(!report[1].additional_sections.some((section) => section.heading === '捕获的 HTTP 请求与响应'));
+    await commitAt(strictDir, { 'injection_exploit_collector.json': [source], 'injection_exploit_collector_renumbered.json': strictRenumbered.renumbered, 'injection_renumber_map.json': { map: Object.fromEntries(strictRenumbered.oldToNew) } });
+    const [report] = await attachHttpEvidence([{ ...findings[0], finding_id: 'INJ-01' }], strictDir);
+    assert.match(JSON.stringify(report.additional_sections), /POST \/create HTTP/);
+    assert.match(JSON.stringify(report.additional_sections), new RegExp(actualReceipt.capture_id));
     const file = `${strictDir}/${actualReceipt.file}`, original = await readFile(file, 'utf8');
     await writeFile(file, original + ' ');
-    await assert.rejects(attachHttpEvidence(input, strictDir), /modified after capture/);
+    await assert.rejects(attachHttpEvidence([findings[0]], strictDir), /modified after capture/);
     await writeFile(file, original);
-  });
-  await check('verified replay captures can satisfy the same host evidence requirement', async () => {
-    const collector = createExploitCollector(strictOptions);
-    const verified = await invoke(collector, 'verify_http_replay', { vulnerability_id: 'INJ-02', plan, variables: { BEARER_TOKEN: 'good' } });
-    assert.equal(verified.status, 'success'); assert.equal(verified.http_evidence.length, 1);
-    assert.equal((await invoke(collector, 'add_exploit', { ...exploit, http_evidence_ids: verified.http_evidence.map((receipt) => receipt.capture_id) })).status, 'success');
   });
 
   async function commitAt(directory, files) {
@@ -509,64 +616,30 @@ try {
       const result = await run('git', args, { cwd: directory, env: gitEnv }); assert.equal(result.code, 0, result.stderr);
     }
   }
-  await check('CLI captures register in the active collector, isolate runs, and never resend after host rejection', async () => {
-    const cliDir = `${temporary}/cli-evidence`, otherDir = `${temporary}/other-cli-evidence`;
-    await mkdir(cliDir); await mkdir(otherDir);
-    const collector = createExploitCollector({ ...strictOptions, deliverablesDir: cliDir });
-    const sibling = createExploitCollector({ ...strictOptions, deliverablesDir: otherDir });
-    const cleanup = await registerCaptureBridge({ directory: cliDir, findingIds: new Set(['INJ-02']), cwd: temporary, tool: collector.tools.find((tool) => tool.name === 'capture_http_request') });
-    const cleanupOther = await registerCaptureBridge({ directory: otherDir, findingIds: new Set(['INJ-02']), cwd: temporary, tool: sibling.tools.find((tool) => tool.name === 'capture_http_request') });
-    try {
-      const count = received.length;
-      const result = await run(process.execPath, [wrapper, '--finding-id', 'INJ-02', '--', '-sS', `${target}/hex`], { cwd: temporary, env: { ...noProxy, SHANNON_DELIVERABLES_DIR: cliDir } });
-      assert.equal(result.code, 0, result.stderr); assert.equal(received.length, count + 1);
-      const listed = await invoke(collector, 'list_http_evidence', { vulnerability_id: 'INJ-02' });
-      assert.equal(listed.total, 1); assert.equal((await invoke(sibling, 'list_http_evidence', {})).total, 0);
-      assert.equal((await invoke(collector, 'add_exploit', { ...actualExploit, http_evidence_ids: [listed.flows[0].capture_id] })).status, 'success');
-      cleanup();
-      const rejected = await run(process.execPath, [wrapper, '--finding-id', 'INJ-02', '--', '-sS', `${target}/hex`], { env: { ...noProxy, SHANNON_DELIVERABLES_DIR: cliDir } });
-      assert.equal(rejected.code, 2); assert.equal(received.length, count + 1);
-    } finally { cleanup(); cleanupOther(); }
+  await check('report rejects unreviewed, omitted and browser-only entries without Record HTTP proof', async () => {
+    for (const display of [undefined, 'omit']) {
+      const legacy = { ...exploit, vulnerability_id: 'INJ-02', verification_method: 'browser', http_evidence_display: display };
+      await commit({ 'injection_exploit_collector.json': [legacy], 'injection_exploit_collector_renumbered.json': [{ ...legacy, vulnerability_id: 'INJ-01' }] });
+      await assert.rejects(attachHttpEvidence([findings[0]], dir), /no complete captured HTTP/);
+    }
   });
-  await check('old directory captures are not selected implicitly and original browser observations survive', async () => {
-    const legacy = { ...exploit, vulnerability_id: 'INJ-02' };
-    delete legacy.http_evidence_display; delete legacy.verification_method; delete legacy.http_evidence_reason;
-    legacy.proof_of_impact = 'Original browser console: XSS_EXEC after click.';
-    await commit({ 'injection_exploit_collector.json': [legacy], 'injection_exploit_collector_renumbered.json': [{ ...legacy, vulnerability_id: 'INJ-01' }] });
-    const [projected] = await attachHttpEvidence([{ ...findings[0], additional_sections: [] }], dir);
-    assert.equal(projected.http_evidence_display, 'unreviewed');
-    assert.ok(!projected.additional_sections.some((section) => section.heading === '捕获的 HTTP 请求与响应'));
-    assert.match(renderReport({ report_meta: { target, assessment_date: '2026-10-15', scope: '', executive_summary: '' }, findings: [projected] }), /Original browser console/);
-    const browser = { ...legacy, verification_method: 'browser', http_evidence_display: 'omit', http_evidence_reason: 'XSS requires a browser click and DOM observation.' };
-    await commit({ 'injection_exploit_collector.json': [browser], 'injection_exploit_collector_renumbered.json': [{ ...browser, vulnerability_id: 'INJ-01' }] });
-    const [omitted] = await attachHttpEvidence([findings[0]], dir);
-    const markdown = renderReport({ report_meta: { target, assessment_date: '2026-10-15', scope: '', executive_summary: '' }, findings: [omitted] });
-    assert.doesNotMatch(markdown, /#### 捕获的 HTTP|缺少已关联/);
-    assert.match(markdown, /浏览器验证证据/);
-    const omittedHttp = { ...browser, verification_method: 'http', proof_of_impact: 'Original HTTP verification observation retained without a packet dump.' };
-    await commit({ 'injection_exploit_collector.json': [omittedHttp], 'injection_exploit_collector_renumbered.json': [{ ...omittedHttp, vulnerability_id: 'INJ-01' }] });
-    const [withoutDump] = await attachHttpEvidence([findings[0]], dir);
-    assert.equal(withoutDump.http_evidence_display, 'omit');
-    assert.match(JSON.stringify(withoutDump.additional_sections), /Original HTTP verification observation/);
-  });
-  await check('an unavailable reason alone cannot bypass the explicit evidence decision', async () => {
-    const collector = createExploitCollector(strictOptions);
-    const input = { ...actualExploit, http_evidence_unavailable_reason: 'skip' };
-    delete input.verification_method; delete input.http_evidence_display; delete input.http_evidence_reason;
-    assert.equal((await invoke(collector, 'add_exploit', input)).status, 'error');
-  });
+  async function exportCapture(directory, curlArguments, secrets) {
+    const captured = await captureHttpRequest({ deliverablesDir: directory, findingId: 'INJ-02', curlArguments, cwd: temporary, secrets });
+    assert.equal(captured.receipt.complete, true);
+    const numbered = buildRenumberMap([evidenceEntry(actualExploit, [captured.receipt])], 'injection');
+    await commitAt(directory, {
+      'injection_exploit_collector.json': [evidenceEntry(actualExploit, [captured.receipt])],
+      'injection_exploit_collector_renumbered.json': numbered.renumbered,
+      'injection_renumber_map.json': { map: Object.fromEntries(numbered.oldToNew) },
+    });
+    return captured.receipt;
+  }
   await check('captured commands enter manual reproduction without an extra replay, preserving bytes and paths', async () => {
     const directory = `${temporary}/manual-capture`, bodyFile = `${temporary}/payload fixture.bin`;
     const bytes = Buffer.from([0, 255, 65, 10, 39, 36, 96]);
     await writeFile(bodyFile, bytes);
-    const collector = createExploitCollector({ ...strictOptions, deliverablesDir: directory, sourceDir: temporary });
-    const capture = await invoke(collector, 'capture_http_request', { vulnerability_id: 'INJ-02', curl_arguments: ['-sS', '-H', 'Authorization: Bearer good', '--data-binary', '@payload fixture.bin', `${target}/app/create?literal=%24%28hello%29`] });
-    assert.equal(capture.complete, true);
+    await exportCapture(directory, ['-sS', '-H', 'Authorization: Bearer good', '--data-binary', '@payload fixture.bin', `${target}/app/create?literal=%24%28hello%29`]);
     const originalRequest = received.at(-1);
-    assert.equal((await invoke(collector, 'add_exploit', { ...actualExploit, http_evidence_ids: [capture.capture_id] })).status, 'success');
-    assert.equal(hasVerifiedReplay(collector.getAll()[0]), false);
-    const renumbered = buildRenumberMap(collector.getAll(), 'injection');
-    await commitAt(directory, { 'injection_exploit_collector.json': collector.getAll(), 'injection_exploit_collector_renumbered.json': renumbered.renumbered, 'injection_renumber_map.json': { map: Object.fromEntries(renumbered.oldToNew) } });
     const before = received.length;
     const script = await writeReproductionScript(directory, `${target}/login/`, new Set(['INJ-01']));
     assert.equal(received.length, before);
@@ -591,14 +664,7 @@ try {
   });
   await check('operator guidance preserves header meaning and reports all missing inputs before requests', async () => {
     const directory = `${temporary}/input-guidance`;
-    const collector = createExploitCollector({ ...strictOptions, deliverablesDir: directory, sourceDir: temporary });
-    const captured = await invoke(collector, 'capture_http_request', {
-      vulnerability_id: 'INJ-02', curl_arguments: ['-sS', '-H', 'Cookie: session=good', '-HAuthorization: Bearer good', `${target}/protected`],
-    });
-    assert.equal(captured.complete, true);
-    assert.equal((await invoke(collector, 'add_exploit', { ...actualExploit, http_evidence_ids: [captured.capture_id] })).status, 'success');
-    const numbered = buildRenumberMap(collector.getAll(), 'injection');
-    await commitAt(directory, { 'injection_exploit_collector.json': collector.getAll(), 'injection_exploit_collector_renumbered.json': numbered.renumbered });
+    await exportCapture(directory, ['-sS', '-H', 'Cookie: session=good', '-HAuthorization: Bearer good', `${target}/protected`]);
     const script = await writeReproductionScript(directory, target, new Set(['INJ-01']));
     const content = await readFile(script, 'utf8');
     const exported = JSON.parse(Buffer.from(content.match(/manual_main\(json.loads\(base64.b64decode\('([^']+)'\)\)\)/)[1], 'base64').toString());
@@ -650,23 +716,10 @@ try {
     assert.deepEqual(inputs.map((input) => input.variable), ['COOKIE', 'USERNAME', 'PASSWORD', 'OTP']);
     assert.match(inputs[0].format, /不包含 Cookie:/);
   });
-  await check('missing browser files and path escapes are rejected while actual logs are accepted', async () => {
-    const sourceDir = `${temporary}/browser-source`; await mkdir(sourceDir); await writeFile(`${sourceDir}/console.txt`, 'XSS_EXEC');
-    const collector = createExploitCollector({ ...strictOptions, sourceDir });
-    const browser = { ...actualExploit, verification_method: 'browser', http_evidence_display: 'omit', http_evidence_reason: 'DOM-only execution after a click.', proof_of_impact: 'Browser console.txt: XSS_EXEC', browser_evidence_files: ['console.txt'] };
-    assert.equal((await invoke(collector, 'add_exploit', { ...browser, browser_evidence_files: ['missing.png'] })).status, 'error');
-    assert.equal((await invoke(collector, 'add_exploit', { ...browser, browser_evidence_files: ['../console.txt'] })).status, 'error');
-    assert.equal((await invoke(collector, 'add_exploit', browser)).status, 'success');
-  });
-
   await check('sensitive bodies are parameterized without altering JSON keys or expanding shell text', async () => {
     const directory = `${temporary}/body-capture`, secret = 'quote"\n$HOME;`literal`';
     const body = JSON.stringify({ username: 'fixture-user', password: secret, payload: '$(do-not-execute)' });
-    const collector = createExploitCollector({ ...strictOptions, deliverablesDir: directory, sourceDir: temporary, secrets: [secret, 'fixture-user'] });
-    const captured = await invoke(collector, 'capture_http_request', { vulnerability_id: 'INJ-02', curl_arguments: ['-sS', '--data-raw', body, `${target}/create`] });
-    assert.equal((await invoke(collector, 'add_exploit', { ...actualExploit, http_evidence_ids: [captured.capture_id] })).status, 'success');
-    const numbered = buildRenumberMap(collector.getAll(), 'injection');
-    await commitAt(directory, { 'injection_exploit_collector.json': collector.getAll(), 'injection_exploit_collector_renumbered.json': numbered.renumbered });
+    await exportCapture(directory, ['-sS', '--data-raw', body, `${target}/create`], [secret, 'fixture-user']);
     const script = await writeReproductionScript(directory, target, new Set(['INJ-01']));
     const source = await readFile(script, 'utf8');
     const exported = JSON.parse(Buffer.from(source.match(/manual_main\(json.loads\(base64.b64decode\('([^']+)'\)\)\)/)[1], 'base64').toString());
@@ -679,11 +732,7 @@ try {
   await check('multipart snapshots preserve filenames and unknown options stay explicitly manual-only', async () => {
     const directory = `${temporary}/multipart-capture`, input = `${temporary}/original-name.txt`;
     await writeFile(input, 'original multipart bytes');
-    const collector = createExploitCollector({ ...strictOptions, deliverablesDir: directory, sourceDir: temporary });
-    const captured = await invoke(collector, 'capture_http_request', { vulnerability_id: 'INJ-02', curl_arguments: ['-sS', '-F', 'upload=@original-name.txt', `${target}/create`] });
-    assert.equal((await invoke(collector, 'add_exploit', { ...actualExploit, http_evidence_ids: [captured.capture_id] })).status, 'success');
-    const numbered = buildRenumberMap(collector.getAll(), 'injection');
-    await commitAt(directory, { 'injection_exploit_collector.json': collector.getAll(), 'injection_exploit_collector_renumbered.json': numbered.renumbered });
+    await exportCapture(directory, ['-sS', '-F', 'upload=@original-name.txt', `${target}/create`]);
     const script = await writeReproductionScript(directory, target, new Set(['INJ-01']));
     await unlink(input);
     const result = await run('bash', [script, 'INJ-01'], { env: { ...noProxy, OUTPUT_DIR: `${temporary}/multipart-results` } });
@@ -698,27 +747,22 @@ try {
     assert.ok(invocation.variables['1']); assert.ok(invocation.variables['3']);
     assert.equal(invocation.argv[1], 'access_token=private-session');
   });
-  await check('offline historical correction preserves sources and browser evidence without target requests', async () => {
+  await check('offline historical correction preserves source receipts and refuses overwrite without target requests', async () => {
     const originalReport = `${temporary}/historical-report.json`, decisionFile = `${temporary}/historical-decisions.json`, destination = `${temporary}/corrected-history`;
-    const sourceReport = { report_meta: { target, assessment_date: '2026-10-15', scope: 'Fixture', executive_summary: 'Original report' }, findings: [
-      { ...findings[0], finding_id: 'INJ-01' }, { ...findings[0], finding_id: 'INJ-02' },
-    ] };
-    await writeFile(originalReport, JSON.stringify(sourceReport));
+    await writeFile(originalReport, JSON.stringify({ report_meta: { target, assessment_date: '2026-10-15', scope: 'Fixture', executive_summary: 'Original report' }, findings: [findings[0]] }));
     await writeFile(decisionFile, JSON.stringify({
-      'INJ-01': { verification_method: 'http', http_evidence_display: 'include', http_evidence_reason: 'Original successful captured request.', source_files: [path.basename(actualReceipt.file)] },
-      'INJ-02': { verification_method: 'browser', http_evidence_display: 'omit', http_evidence_reason: 'Browser DOM-only proof is the appropriate evidence.', source_files: [] },
+      'INJ-01': { verification_method: 'http', http_evidence_display: 'include', http_evidence_reason: 'Original captured request.', source_files: [path.basename(actualReceipt.file)] },
     }));
     const before = received.length, originalCollector = await readFile(`${strictDir}/injection_exploit_collector.json`, 'utf8');
-    const repaired = await run(process.execPath, [`${temporary}/dist/scripts/repair-evidence-report.js`, '--source', strictDir, '--report', originalReport, '--output', destination, '--decisions', decisionFile, '--no-pdf']);
+    const args = [`${temporary}/dist/scripts/repair-evidence-report.js`, '--source', strictDir, '--report', originalReport, '--output', destination, '--decisions', decisionFile, '--no-pdf'];
+    const repaired = await run(process.execPath, args);
     assert.equal(repaired.code, 0, repaired.stdout + repaired.stderr);
     assert.equal(received.length, before); assert.equal(await readFile(`${strictDir}/injection_exploit_collector.json`, 'utf8'), originalCollector);
     const corrected = JSON.parse(await readFile(`${destination}/report.json`, 'utf8'));
-    const browser = corrected.findings.find((item) => item.finding_id === 'INJ-02');
-    assert.equal(browser.http_evidence_display, 'omit');
-    assert.ok(!browser.additional_sections.some((item) => item.heading === '捕获的 HTTP 请求与响应'));
-    assert.ok(browser.additional_sections.some((item) => item.heading === '浏览器验证证据'));
-    const repeated = await run(process.execPath, [`${temporary}/dist/scripts/repair-evidence-report.js`, '--source', strictDir, '--report', originalReport, '--output', destination, '--decisions', decisionFile, '--no-pdf']);
-    assert.notEqual(repeated.code, 0); assert.equal(received.length, before);
+    assert.equal(corrected.findings.length, 1);
+    assert.match(JSON.stringify(corrected.findings[0].additional_sections), /POST \/create HTTP/);
+    assert.notEqual((await run(process.execPath, args)).code, 0);
+    assert.equal(received.length, before);
   });
   console.log(`Verified ${results.length} HTTP evidence/replay scenarios. Artifacts: ${temporary}`);
   await writeFile(`${temporary}/checks.json`, JSON.stringify(results, null, 2));

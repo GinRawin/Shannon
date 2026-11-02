@@ -142,7 +142,9 @@ const vulnAnalysisActs = proxyActivities<
   cancellationType: ActivityCancellationType.TRY_CANCEL,
 });
 
-const postExploitationActs = proxyActivities<Pick<typeof activities, 'runPostExploitationStage'>>({
+const postExploitationActs = proxyActivities<
+  Pick<typeof activities, 'runPostExploitationStage' | 'assertRecordVerificationComplete'>
+>({
   startToCloseTimeout: '5 hours',
   heartbeatTimeout: '60 minutes',
   retry: PRODUCTION_RETRY,
@@ -1266,6 +1268,17 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
           activityInput,
           'record-expansion',
         );
+        state.currentAgent = 'record-failure-review';
+        state.agentMetrics['record-failure-review'] = await postExploitation.runPostExploitationStage(
+          activityInput,
+          'record-failure-review',
+        );
+        state.currentAgent = 'record-retry';
+        state.agentMetrics['record-retry'] = await postExploitation.runPostExploitationStage(
+          activityInput,
+          'record-retry',
+        );
+        await postExploitation.assertRecordVerificationComplete(activityInput);
         state.currentAgent = 'report';
       }
       const assembled = await runOperation('report:assemble', 'Assemble report inputs', () =>

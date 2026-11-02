@@ -21,10 +21,11 @@ import path from 'node:path';
 import { ApplicationFailure, Context, heartbeat } from '@temporalio/activity';
 import { syncPermissionSystemConfig } from '../ai/pi/permission-system.js';
 import { writePlaywrightStealthConfig } from '../ai/playwright-config-writer.js';
+import { agentLogPath } from '../audit/actor-projection.js';
 import { AuditSession } from '../audit/index.js';
 import type { ResumeAttempt } from '../audit/metrics-tracker.js';
 import type { LoggableAgentName, WorkflowPhase } from '../audit/safe-fields.js';
-import { authStateFile, generateAuditPath, type SessionMetadata } from '../audit/utils.js';
+import { authStateFile, generateAuditPath, generateWorkflowLogPath, type SessionMetadata } from '../audit/utils.js';
 import type { WorkflowSummary } from '../audit/workflow-logger.js';
 import type { CheckpointContext } from '../interfaces/checkpoint-provider.js';
 import {
@@ -61,9 +62,33 @@ import { runPreflightChecks } from '../services/preflight.js';
 import { formatVulnClassScope, loadPromptFragment } from '../services/prompt-manager.js';
 import type { ExploitationDecision, VulnType } from '../services/queue-validation.js';
 import {
+  aggregateRecordFailures,
+  applyExploitReviews,
+  applyRecordRetryEvidence,
+  type ExploitReviewResult,
+  finalizeRecordReportAdmission,
+  loadRecordReportFindingIds,
+  mergeRecordVerdicts,
+  RECORD_CLASSES,
+  type RecordFailure,
+  refreshRecordedReportEvidence,
+  validateRecordBrowserEvidence,
+  validateRecordReportAdmission,
+  writeFinalRecordFailureAudit,
+} from '../services/record-verification.js';
+import {
   renumberClassFindings as renumberClassFindingsService,
   sparseExploitCollectorPath,
 } from '../services/renumber-core.js';
+import {
+  loadReplayResponseBodies,
+  loadReplayVariableDefinitions,
+  loadReplayVariables,
+  missingReplayVariables,
+  type ReplayVariableDefinition,
+  resolveReplayVariables,
+  updateReplayVariables,
+} from '../services/replay-variables.js';
 import {
   checkpointFileContents,
   checkpointIsAncestor,
@@ -198,6 +223,19 @@ function buildSessionMetadata(input: ActivityInput): SessionMetadata {
     repoPath,
     ...(outputPath && { outputPath }),
   };
+}
+
+function recordAgentLogPath(input: ActivityInput, name: string): string {
+  return path.resolve(agentLogPath(generateWorkflowLogPath(buildSessionMetadata(input)), name));
+}
+
+function exploitLogPaths(input: ActivityInput): ReadonlyMap<string, string> {
+  return new Map(
+    RECORD_CLASSES.flatMap((vulnerabilityClass) => [
+      [vulnerabilityClass, recordAgentLogPath(input, `${vulnerabilityClass}-exploit`)],
+      [`${vulnerabilityClass}-expansion`, recordAgentLogPath(input, `${vulnerabilityClass}-exploit-expansion`)],
+    ]),
+  );
 }
 
 /**
@@ -961,6 +999,14 @@ async function runExploitAgentWithCollector(
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   const queuePath = path.join(dir, `${vulnClass}_exploitation_queue.json`);
   const expansion = input.exploreExpansion === true;
+  const replayVariableDir = path.join(
+    path.dirname(dir),
+    'scratchpad',
+    'replay-variables',
+    expansion ? 'expansion' : 'initial',
+  );
+  await fs.mkdir(replayVariableDir, { recursive: true, mode: 0o700 });
+  await fs.chmod(replayVariableDir, 0o700);
   const candidateQueuePath = path.join(dir, `explore_candidates_${vulnClass}.json`);
   let originalQueue: string | undefined;
   if (expansion) {
@@ -988,11 +1034,42 @@ async function runExploitAgentWithCollector(
   }
   const { validIds, idToType } = await readExploitQueue(queuePath);
 
-  const collector = createExploitCollector({ vulnClass, validIds });
+  const exploitContainer = getOrCreateContainer(
+    input.workflowId,
+    buildSessionMetadata(input),
+    buildContainerConfig(input),
+  );
+  const exploitConfig = await exploitContainer.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
+  if (isErr(exploitConfig)) throw deterministicActivityFailure(exploitConfig.error, 'ConfigurationError');
+  const credentials = exploitConfig.value?.authentication?.credentials;
+  const configuredVariables = [
+    ...(credentials?.username || credentials?.email_login?.address ? ['USERNAME'] : []),
+    ...(credentials?.password || credentials?.email_login?.password ? ['PASSWORD'] : []),
+    ...(credentials?.totp_secret || credentials?.email_login?.totp_secret ? ['OTP'] : []),
+  ];
+
+  const collector = createExploitCollector({
+    vulnClass,
+    validIds,
+    validateReplayVariables: async (findingId, plan) => {
+      try {
+        const values = await loadReplayVariables(replayVariableDir, findingId);
+        const missing = missingReplayVariables(plan, values, configuredVariables);
+        return missing.length
+          ? `Save the required replay variables in ${replayVariableDir}/${findingId}.json before submitting: ${missing.join(', ')}.`
+          : undefined;
+      } catch {
+        return `Invalid replay variable file for ${findingId}; write a private JSON object of string values.`;
+      }
+    },
+  });
 
   const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
     const logger = createActivityLogger();
-    const collected = collector.getAll();
+    const collected = collector.getAll().map((entry) => ({
+      ...entry,
+      exploit_log_path: recordAgentLogPath(input, expansion ? `${vulnClass}-exploit-expansion` : agentName),
+    }));
     const emittedIds = new Set(collected.map((e) => e.vulnerability_id));
     const missingIds = [...validIds].filter((id) => !emittedIds.has(id));
     const exploitedCount = collected.filter((e) => e.status === 'exploited').length;
@@ -1030,7 +1107,7 @@ async function runExploitAgentWithCollector(
     if (originalQueue !== undefined) await atomicWrite(queuePath, originalQueue);
   };
   try {
-    const extra = expansion
+    const expansionPrompt = expansion
       ? await loadPromptFragment(
           'explore-expansion-exploit',
           input.pipelineTestingMode ?? false,
@@ -1038,6 +1115,7 @@ async function runExploitAgentWithCollector(
           input.promptDir,
         )
       : undefined;
+    const extra = `${expansionPrompt ?? ''}\n\nREPLAY VARIABLE HANDOFF: For every exploited finding with an http_replay plan, save the actual values of all placeholders needed by that plan that cannot be extracted from earlier replay responses or supplied by configured credentials. Write a JSON object mapping variable names to string values to ${replayVariableDir}/<vulnerability_id>.json (for example AUTH-01.json), with file permissions 0600. Use the exact queue ID. Never save BASE_URL. Keep this file in scratchpad, not deliverables, and do not include its values in reports or replay plans. Use values obtained during your exploitation, not guessed placeholders. Prefer save_json/save_headers in the plan for short-lived tokens. The plan must describe the same request, encoding, headers, parameters, and observed impact response that established exploitation; write variables before add_exploit. Record executes this plan against the same target. If the request is not repeatable or cannot be faithfully represented, explain that limitation. Do not print file contents.`;
     const auditAgentName = expansion ? (`${vulnClass}-exploit-expansion` as PostExploitationStage) : undefined;
     return await runAgentActivity(
       agentName,
@@ -1079,13 +1157,40 @@ export async function runMiscellaneousExploitAgent(input: ActivityInput): Promis
   return runExploitAgentWithCollector('miscellaneous-exploit', 'miscellaneous', input);
 }
 
-/** Replay documented exploit proof after exploration has finished; unresolved results are durable but report-excluded. */
 export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics> {
   const { createRecordCollector } = await import('../collectors/record-collector.js');
   const { verifyHttpReplay } = await import('../services/http-replay.js');
   const classes: ReconciliationClass[] = ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous'];
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+  // A resumed pending report can lack the outputs normally created before record.
+  // Restore the complete, canonical pair before replay creates verified IDs.
+  if (!input.exploreExpansion) {
+    for (const vulnerabilityClass of classes) {
+      const source = path.join(dir, `${vulnerabilityClass}_exploit_collector.json`);
+      const collector = path.join(dir, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
+      const map = path.join(dir, `${vulnerabilityClass}_renumber_map.json`);
+      const exists = async (file: string): Promise<boolean> => {
+        try {
+          await fs.access(file);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+          throw error;
+        }
+      };
+      if ((await exists(source)) && (!(await exists(collector)) || !(await exists(map)))) {
+        const result = await renumberClassFindingsService({
+          deliverablesDir: dir,
+          vulnerabilityClass,
+          logger: createActivityLogger(),
+        });
+        if (result.skipped)
+          throw new Error(`Cannot restore renumbered ${vulnerabilityClass} collector from committed source.`);
+      }
+    }
+  }
   const validIds = new Set<string>();
+  const xssFindingIds = new Set<string>();
   for (const vulnerabilityClass of classes) {
     const queueFile = path.join(
       dir,
@@ -1096,7 +1201,10 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
     try {
       const queue = JSON.parse(await fs.readFile(queueFile, 'utf8')) as { vulnerabilities?: Array<{ ID?: unknown }> };
       for (const vulnerability of queue.vulnerabilities ?? [])
-        if (typeof vulnerability.ID === 'string') validIds.add(vulnerability.ID);
+        if (typeof vulnerability.ID === 'string') {
+          validIds.add(vulnerability.ID);
+          if (vulnerabilityClass === 'xss') xssFindingIds.add(vulnerability.ID);
+        }
     } catch {
       // An absent class queue simply means there were no findings of that class.
     }
@@ -1106,6 +1214,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
   if (isErr(config)) throw deterministicActivityFailure(config.error, 'ConfigurationError');
   const captureRedactions = configuredCaptureRedactions(config.value?.authentication?.credentials);
   const verificationPlans = new Map<string, import('../services/http-replay.js').HttpReplayPlan>();
+  const exploitContext: Array<{ finding_id: string; exploit_log_path: string }> = [];
   for (const vulnerabilityClass of classes) {
     const collectorPath = path.join(
       dir,
@@ -1118,24 +1227,45 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         vulnerability_id?: unknown;
         status?: unknown;
         http_replay?: import('../services/http-replay.js').HttpReplayPlan | null;
+        exploit_log_path?: string;
       }>;
-      for (const entry of entries)
-        if (entry.status === 'exploited' && typeof entry.vulnerability_id === 'string' && entry.http_replay)
-          verificationPlans.set(entry.vulnerability_id, entry.http_replay);
+      for (const entry of entries) {
+        if (entry.status !== 'exploited' || typeof entry.vulnerability_id !== 'string') continue;
+        if (entry.http_replay) verificationPlans.set(entry.vulnerability_id, entry.http_replay);
+        exploitContext.push({
+          finding_id: entry.vulnerability_id,
+          exploit_log_path:
+            entry.exploit_log_path ??
+            recordAgentLogPath(
+              input,
+              input.exploreExpansion ? `${vulnerabilityClass}-exploit-expansion` : `${vulnerabilityClass}-exploit`,
+            ),
+        });
+      }
     } catch {
       // Empty or absent class collectors have no replay plans.
     }
   }
   const credentials = config.value?.authentication?.credentials;
-  const replayVariables: Record<string, string> = {
-    BASE_URL: new URL(input.webUrl).origin,
+  const configuredReplayDefinitions: Record<string, ReplayVariableDefinition> = {
     ...(credentials?.username ? { USERNAME: credentials.username } : {}),
     ...(credentials?.password ? { PASSWORD: credentials.password } : {}),
-    ...(credentials?.totp_secret ? { OTP: credentials.totp_secret } : {}),
+    ...(credentials?.totp_secret
+      ? { OTP: { value: credentials.totp_secret, kind: 'totp' as const, refresh: 'each_attempt' as const } }
+      : {}),
     ...(credentials?.email_login?.address ? { USERNAME: credentials.email_login.address } : {}),
     ...(credentials?.email_login?.password ? { PASSWORD: credentials.email_login.password } : {}),
-    ...(credentials?.email_login?.totp_secret ? { OTP: credentials.email_login.totp_secret } : {}),
+    ...(credentials?.email_login?.totp_secret
+      ? { OTP: { value: credentials.email_login.totp_secret, kind: 'totp' as const, refresh: 'each_attempt' as const } }
+      : {}),
   };
+  const replayVariableDir = path.join(
+    path.dirname(dir),
+    'scratchpad',
+    'replay-variables',
+    input.exploreExpansion ? 'expansion' : 'initial',
+  );
+  const configuredReplayVariables = Object.keys(configuredReplayDefinitions);
   const collector = createRecordCollector({
     deliverablesDir: dir,
     targetUrl: input.webUrl,
@@ -1143,15 +1273,45 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
     validIds,
     secrets: captureRedactions.map((item) => item.value),
     verificationPlans,
-    verifyReplay: (findingId, plan) =>
-      verifyHttpReplay({
+    inspectReplayVariables: async (findingId) =>
+      Object.keys(await loadReplayVariables(replayVariableDir, findingId)).sort(),
+    repairReplayVariables: (findingId, plan, updates) =>
+      updateReplayVariables(replayVariableDir, findingId, plan, updates, configuredReplayVariables),
+    xssFindingIds,
+    stage: input.exploreExpansion ? 'record-expansion' : 'record',
+    recordLogPath: recordAgentLogPath(input, input.exploreExpansion ? 'record-expansion' : 'record'),
+    validateBrowserEvidence: (_findingId, files) => validateRecordBrowserEvidence(input.repoPath, files),
+    verifyReplay: async (findingId, plan) => {
+      let savedDefinitions: Record<string, ReplayVariableDefinition>;
+      try {
+        savedDefinitions = await loadReplayVariableDefinitions(replayVariableDir, findingId);
+      } catch {
+        return { error: 'Could not read replay variable file.' };
+      }
+      const resolution = resolveReplayVariables({
+        definitions: { ...configuredReplayDefinitions, ...savedDefinitions },
+        baseUrl: input.webUrl,
+        responseBodies: await loadReplayResponseBodies(dir),
+      });
+      const variableFailures = resolution.diagnostics.filter((diagnostic) => diagnostic.status !== 'resolved');
+      if (variableFailures.length) {
+        return {
+          error: `Replay variables could not be refreshed: ${variableFailures.map((item) => `${item.name}:${item.status}`).join(', ')}.`,
+          variableDiagnostics: resolution.diagnostics as unknown as Array<Record<string, unknown>>,
+        };
+      }
+      return verifyHttpReplay({
         findingId,
         plan,
-        variables: replayVariables,
+        variables: resolution.values,
         deliverablesDir: dir,
         targetUrl: input.webUrl,
-        secrets: captureRedactions.map((item) => item.value),
-      }),
+        secrets: [
+          ...captureRedactions.map((item) => item.value),
+          ...Object.values(resolution.values).filter((value) => value !== new URL(input.webUrl).origin),
+        ],
+      });
+    },
   });
   const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
     const { renderExploitDeliverable } = await import('../services/exploit-renderer.js');
@@ -1165,7 +1325,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
       frontend_reason: redact(verdict.frontend_reason),
     }));
     const byId = new Map(verdicts.map((verdict) => [verdict.finding_id, verdict]));
-    const pending: typeof verdicts = [];
+    const failed: typeof verdicts = [];
     const verifiedFindingIds = new Set<string>();
     for (const vulnerabilityClass of classes) {
       const sourceCollectorPath = path.join(
@@ -1177,7 +1337,9 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
       const renumberedCollectorPath = input.exploreExpansion
         ? sourceCollectorPath
         : path.join(deliverablesPath, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
-      let sourceEntries: Array<Record<string, unknown> & { vulnerability_id?: string; status?: string; http_replay_verification?: unknown }>;
+      let sourceEntries: Array<
+        Record<string, unknown> & { vulnerability_id?: string; status?: string; http_replay_verification?: unknown }
+      >;
       try {
         sourceEntries = JSON.parse(await fs.readFile(sourceCollectorPath, 'utf8')) as Array<
           Record<string, unknown> & { vulnerability_id?: string; status?: string }
@@ -1189,13 +1351,20 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         if (entry.status !== 'exploited' || !entry.vulnerability_id || byId.has(entry.vulnerability_id)) continue;
         const unresolved = {
           finding_id: entry.vulnerability_id,
-          status: 'manual_review' as const,
+          status: 'failed' as const,
           reason: 'No replay verdict was recorded.',
           capture_ids: [],
           frontend_status: 'unable_to_determine' as const,
           frontend_url: null,
           frontend_trigger: null,
           frontend_reason: 'The record agent did not establish the frontend entry point.',
+          failure_kind: 'missing_verdict',
+          error: 'The Record agent did not submit a verdict.',
+          attempts: 0,
+          partial_capture_ids: [],
+          variable_diagnostics: [],
+          record_log_path: recordAgentLogPath(input, input.exploreExpansion ? 'record-expansion' : 'record'),
+          stage: input.exploreExpansion ? ('record-expansion' as const) : ('record' as const),
         };
         verdicts.push(unresolved);
         byId.set(entry.vulnerability_id, unresolved);
@@ -1206,17 +1375,29 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         if (verdict?.status === 'verified') {
           entry.http_evidence_ids = verdict.capture_ids;
           entry.http_evidence_receipts = verdict.http_evidence_receipts ?? [];
-          entry.http_evidence_display = 'include';
-          entry.verification_method = 'http';
+          entry.http_evidence_display = verdict.capture_ids.length ? 'include' : 'omit';
+          entry.verification_method = verdict.browser_verification
+            ? verdict.capture_ids.length
+              ? 'mixed'
+              : 'browser'
+            : 'http';
           entry.http_evidence_reason = verdict.reason;
           entry.http_replay_verification = verdict.http_replay_verification;
+          if (verdict.browser_verification) {
+            entry.browser_verification = verdict.browser_verification;
+            entry.browser_evidence_files = [
+              ...new Set([
+                ...(Array.isArray(entry.browser_evidence_files) ? (entry.browser_evidence_files as string[]) : []),
+                ...verdict.browser_verification.evidence_files,
+              ]),
+            ];
+          }
         } else if (entry.status === 'exploited') {
           entry.http_evidence_ids = [];
           entry.http_evidence_receipts = [];
           entry.http_evidence_display = 'omit';
           entry.verification_method = 'other';
-          entry.http_evidence_reason =
-            verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
+          entry.http_evidence_reason = verdict?.reason ?? 'No replay verdict was recorded; failure review is required.';
           delete entry.http_replay_verification;
         }
       }
@@ -1242,17 +1423,29 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         if (verdict?.status === 'verified') {
           entry.http_evidence_ids = verdict.capture_ids;
           entry.http_evidence_receipts = verdict.http_evidence_receipts ?? [];
-          entry.http_evidence_display = 'include';
-          entry.verification_method = 'http';
+          entry.http_evidence_display = verdict.capture_ids.length ? 'include' : 'omit';
+          entry.verification_method = verdict.browser_verification
+            ? verdict.capture_ids.length
+              ? 'mixed'
+              : 'browser'
+            : 'http';
           entry.http_evidence_reason = verdict.reason;
           entry.http_replay_verification = verdict.http_replay_verification;
+          if (verdict.browser_verification) {
+            entry.browser_verification = verdict.browser_verification;
+            entry.browser_evidence_files = [
+              ...new Set([
+                ...(Array.isArray(entry.browser_evidence_files) ? (entry.browser_evidence_files as string[]) : []),
+                ...verdict.browser_verification.evidence_files,
+              ]),
+            ];
+          }
         } else if (entry.status === 'exploited') {
           entry.http_evidence_ids = [];
           entry.http_evidence_receipts = [];
           entry.http_evidence_display = 'omit';
           entry.verification_method = 'other';
-          entry.http_evidence_reason =
-            verdict?.reason ?? 'No replay verdict was recorded; manual verification is pending.';
+          entry.http_evidence_reason = verdict?.reason ?? 'No replay verdict was recorded; failure review is required.';
           delete entry.http_replay_verification;
         }
       }
@@ -1301,7 +1494,10 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
               verdict.frontend_status === 'available'
                 ? `Frontend URL: ${verdict.frontend_url}\n\nFrontend trigger: ${verdict.frontend_trigger}`
                 : `Frontend status: ${verdict.frontend_status} — ${verdict.frontend_reason}`;
-            return `- ${verdict.finding_id}: packet captures ${verdict.capture_ids.join(', ')}; ${verdict.reason}\n\n  ${frontend}`;
+            const verification = verdict.browser_verification
+              ? `Browser assertion: ${verdict.browser_verification.assertion_type} matched “${verdict.browser_verification.expected}” in observed value “${verdict.browser_verification.observed}”; screenshots: ${verdict.browser_verification.evidence_files.join(', ')}.`
+              : `Packet captures: ${verdict.capture_ids.join(', ')}.`;
+            return `- ${verdict.finding_id}: ${verification} ${verdict.reason}\n\n  ${frontend}`;
           })
           .join('\n')}\n`;
       }
@@ -1326,16 +1522,23 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         if (entry.status !== 'exploited' || !entry.vulnerability_id) continue;
         const verdict = byId.get(entry.vulnerability_id);
         if (!verdict || verdict.status !== 'verified') {
-          pending.push(
+          failed.push(
             verdict ?? {
               finding_id: entry.vulnerability_id,
-              status: 'manual_review' as const,
+              status: 'failed' as const,
               reason: 'No replay verdict was recorded.',
               capture_ids: [],
               frontend_status: 'unable_to_determine' as const,
               frontend_url: null,
               frontend_trigger: null,
               frontend_reason: 'The record agent did not establish the frontend entry point.',
+              failure_kind: 'missing_verdict',
+              error: 'The Record agent did not submit a verdict.',
+              attempts: 0,
+              partial_capture_ids: [],
+              variable_diagnostics: [],
+              record_log_path: recordAgentLogPath(input, input.exploreExpansion ? 'record-expansion' : 'record'),
+              stage: input.exploreExpansion ? ('record-expansion' as const) : ('record' as const),
             },
           );
         }
@@ -1350,7 +1553,13 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
       const previousIds = JSON.parse(
         await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8'),
       ) as string[];
-      allVerdicts = [...previousVerdicts, ...verdicts];
+      const merged = new Map(previousVerdicts.map((verdict) => [verdict.finding_id, verdict]));
+      for (const verdict of verdicts) {
+        const previous = merged.get(verdict.finding_id);
+        if (previous?.status === 'verified' && verdict.status === 'failed') continue;
+        merged.set(verdict.finding_id, verdict);
+      }
+      allVerdicts = [...merged.values()];
       allVerifiedFindingIds = new Set([...previousIds, ...verifiedFindingIds]);
     }
     await atomicWrite(
@@ -1372,29 +1581,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
       ]),
     ];
     await atomicWrite(path.join(deliverablesPath, 'record_verification.md'), `${lines.join('\n')}\n`);
-    const pendingLines = [
-      '# Pending Manual Verification',
-      '',
-      'The following exploitation findings could not be replay-verified and are omitted from the final report.',
-      '',
-    ];
-    for (const item of pending) {
-      pendingLines.push(`- **${item.finding_id}**: ${item.reason}`);
-      pendingLines.push(
-        item.frontend_status === 'available'
-          ? `  Frontend: ${item.frontend_url} — ${item.frontend_trigger}`
-          : `  Frontend: ${item.frontend_status} — ${item.frontend_reason}`,
-      );
-    }
-    if (!pending.length) pendingLines.push('No findings are pending manual verification.');
-    if (input.exploreExpansion) {
-      const originalPending = await fs
-        .readFile(path.join(deliverablesPath, 'pending_manual_verification.md'), 'utf8')
-        .catch(() => '');
-      if (originalPending)
-        pendingLines.splice(0, 3, originalPending.trimEnd(), '', '## Expansion findings pending replay');
-    }
-    await atomicWrite(path.join(deliverablesPath, 'pending_manual_verification.md'), `${pendingLines.join('\n')}\n`);
+    if (failed.length) createActivityLogger().warn(`Record left ${failed.length} finding(s) for failure review.`);
   };
   const expansionInstructions = input.exploreExpansion
     ? await loadPromptFragment(
@@ -1411,7 +1598,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
     writeDeliverable,
     'terminal',
     true,
-    expansionInstructions,
+    `${expansionInstructions ?? ''}\n\n<exploit_context>\n${JSON.stringify(exploitContext, null, 2)}\n</exploit_context>\nRead the original exploit record and the supplied exploit_log_path before replay or variable repair. The log includes the original tool observations and delegated work; this is a new session, so do not assume prior conversational memory. Each finding has at most three HTTP replay attempts, including the first.`,
     input.exploreExpansion ? 'record-expansion' : undefined,
   );
 }
@@ -1432,12 +1619,20 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
     );
   const verifiedIds = new Set(verifiedIdsRaw as string[]);
   const sinks = new Map<string, { vulnerabilityClass: string; locations: Map<string, Set<number>> }>();
+  const missingCollectors: string[] = [];
   for (const vulnerabilityClass of classes) {
     const collectorPath = path.join(dir, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
     let entries: Array<{ vulnerability_id?: unknown; status?: unknown; code_locations?: unknown }>;
     try {
       entries = JSON.parse(await fs.readFile(collectorPath, 'utf8')) as typeof entries;
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      try {
+        await fs.access(path.join(dir, `${vulnerabilityClass}_exploit_collector.json`));
+        missingCollectors.push(vulnerabilityClass);
+      } catch (sourceError) {
+        if ((sourceError as NodeJS.ErrnoException).code !== 'ENOENT') throw sourceError;
+      }
       continue;
     }
     for (const entry of entries) {
@@ -1458,6 +1653,12 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
       }
       if (locations.size) sinks.set(entry.vulnerability_id, { vulnerabilityClass, locations });
     }
+  }
+  if (verifiedIds.size > 0 && missingCollectors.length > 0) {
+    throw ApplicationFailure.nonRetryable(
+      `Explore cannot establish trusted sinks: missing renumbered exploit collectors for ${missingCollectors.join(', ')}.`,
+      'ExploreInputError',
+    );
   }
   const collector = createExploreCollector({ sinks });
   const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
@@ -1492,6 +1693,464 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
     await atomicWrite(path.join(deliverablesPath, 'explore_deliverable.md'), `${lines.join('\n')}\n`);
   };
   return runAgentActivity('explore', input, collector.tools, writeDeliverable);
+}
+
+async function loadExploitReviews(dir: string): Promise<ExploitReviewResult[]> {
+  const reviews: ExploitReviewResult[] = [];
+  for (const vulnerabilityClass of RECORD_CLASSES) {
+    try {
+      const value: unknown = JSON.parse(
+        await fs.readFile(path.join(dir, `exploit_review_${vulnerabilityClass}.json`), 'utf8'),
+      );
+      if (Array.isArray(value)) reviews.push(...(value as ExploitReviewResult[]));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  return reviews;
+}
+
+/** Offline, category-grouped review. The dedicated collector prevents duplicate vulnerability submission. */
+export async function runRecordFailureReviewAgent(input: ActivityInput): Promise<AgentMetrics> {
+  const { createExploitReviewCollector } = await import('../collectors/exploit-review-collector.js');
+  const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+  const failures = await aggregateRecordFailures(dir, exploitLogPaths(input));
+  if (!failures.length) {
+    await writeAndCommitExactFiles(
+      dir,
+      [
+        {
+          relPath: 'record-failures.json',
+          contents: await fs.readFile(path.join(dir, 'record-failures.json'), 'utf8'),
+        },
+      ],
+      'Save empty Record failure aggregation',
+      createActivityLogger(),
+    );
+    return {
+      durationMs: 0,
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      costUsd: 0,
+      numTurns: 0,
+      skipped: true,
+    };
+  }
+  const agentByClass: Record<(typeof RECORD_CLASSES)[number], AgentName> = {
+    injection: 'injection-exploit',
+    xss: 'xss-exploit',
+    auth: 'auth-exploit',
+    ssrf: 'ssrf-exploit',
+    authz: 'authz-exploit',
+    miscellaneous: 'miscellaneous-exploit',
+  };
+  const reviewInstructions = await loadPromptFragment(
+    'record-failure-review',
+    input.pipelineTestingMode ?? false,
+    createActivityLogger(),
+    input.promptDir,
+  );
+  const metrics: AgentMetrics[] = [];
+  for (const vulnerabilityClass of RECORD_CLASSES) {
+    const classFailures = failures.filter((failure) => failure.vulnerability_class === vulnerabilityClass);
+    if (!classFailures.length) continue;
+    const collector = createExploitReviewCollector(new Set(classFailures.map((failure) => failure.finding_id)));
+    const prompt = `${reviewInstructions}\n\nReview class: ${vulnerabilityClass}\n\n${JSON.stringify(classFailures, null, 2)}`;
+    metrics.push(
+      await runAgentActivity(
+        agentByClass[vulnerabilityClass],
+        input,
+        collector.tools,
+        async (deliverablesPath) => {
+          const reviews = collector.getAll();
+          const submitted = new Set(reviews.map((review) => review.finding_id));
+          const missing = classFailures.filter((failure) => !submitted.has(failure.finding_id));
+          if (missing.length)
+            throw ApplicationFailure.nonRetryable(
+              `Failure review omitted findings: ${missing.map((item) => item.finding_id).join(', ')}.`,
+              'RecordVerificationError',
+            );
+          await atomicWrite(
+            path.join(deliverablesPath, `exploit_review_${vulnerabilityClass}.json`),
+            `${JSON.stringify(reviews, null, 2)}\n`,
+          );
+        },
+        'terminal',
+        false,
+        prompt,
+        'record-failure-review',
+      ),
+    );
+  }
+
+  const reviews = await loadExploitReviews(dir);
+  await applyExploitReviews(dir, reviews);
+  const { renderExploitDeliverable } = await import('../services/exploit-renderer.js');
+  const changed = new Set<string>([
+    'record-failures.json',
+    'record_verification.json',
+    'record_verified_finding_ids.json',
+  ]);
+  for (const vulnerabilityClass of RECORD_CLASSES) {
+    const queue = await readExploitQueue(path.join(dir, `${vulnerabilityClass}_exploitation_queue.json`));
+    const sourcePath = path.join(dir, `${vulnerabilityClass}_exploit_collector.json`);
+    const renumberedPath = path.join(dir, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
+    try {
+      const source = JSON.parse(
+        await fs.readFile(sourcePath, 'utf8'),
+      ) as import('../collectors/exploit-collector.js').AddExploitInput[];
+      await atomicWrite(
+        path.join(dir, `${vulnerabilityClass}_exploitation_evidence.md`),
+        renderExploitDeliverable(vulnerabilityClass, source, queue.idToType),
+      );
+      const renumbered = JSON.parse(
+        await fs.readFile(renumberedPath, 'utf8'),
+      ) as import('../collectors/exploit-collector.js').AddExploitInput[];
+      await atomicWrite(
+        path.join(dir, `${vulnerabilityClass}_recorded_exploitation_evidence.md`),
+        renderExploitDeliverable(vulnerabilityClass, renumbered, queue.idToType),
+      );
+      for (const name of [
+        `${vulnerabilityClass}_exploit_collector.json`,
+        `${vulnerabilityClass}_exploit_collector_renumbered.json`,
+        `${vulnerabilityClass}_exploitation_queue.json`,
+        `${vulnerabilityClass}_renumber_map.json`,
+        `${vulnerabilityClass}_exploitation_evidence.md`,
+        `${vulnerabilityClass}_recorded_exploitation_evidence.md`,
+      ])
+        changed.add(name);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const expansionPath = path.join(dir, `explore_expansion_${vulnerabilityClass}_exploit_collector.json`);
+    try {
+      const expansion = JSON.parse(
+        await fs.readFile(expansionPath, 'utf8'),
+      ) as import('../collectors/exploit-collector.js').AddExploitInput[];
+      const candidateQueue = await readExploitQueue(path.join(dir, `explore_candidates_${vulnerabilityClass}.json`));
+      const rendered = renderExploitDeliverable(vulnerabilityClass, expansion, candidateQueue.idToType);
+      await atomicWrite(path.join(dir, `explore_expansion_${vulnerabilityClass}_exploitation_evidence.md`), rendered);
+      await atomicWrite(
+        path.join(dir, `explore_expansion_${vulnerabilityClass}_recorded_exploitation_evidence.md`),
+        rendered,
+      );
+      for (const name of [
+        `explore_candidates_${vulnerabilityClass}.json`,
+        `explore_expansion_${vulnerabilityClass}_exploit_collector.json`,
+        `explore_expansion_${vulnerabilityClass}_exploitation_evidence.md`,
+        `explore_expansion_${vulnerabilityClass}_recorded_exploitation_evidence.md`,
+      ])
+        changed.add(name);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  const exactFiles = [];
+  for (const relPath of changed) {
+    try {
+      exactFiles.push({ relPath, contents: await fs.readFile(path.join(dir, relPath), 'utf8') });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  await writeAndCommitExactFiles(dir, exactFiles, 'Apply Record failure review decisions', createActivityLogger());
+  const sum = (key: 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens' | 'numTurns') => {
+    const values = metrics.map((item) => item[key]).filter((value): value is number => typeof value === 'number');
+    return values.length ? values.reduce((total, value) => total + value, 0) : null;
+  };
+  return {
+    durationMs: metrics.reduce((total, item) => total + item.durationMs, 0),
+    inputTokens: sum('inputTokens'),
+    outputTokens: sum('outputTokens'),
+    cacheReadTokens: sum('cacheReadTokens'),
+    cacheWriteTokens: sum('cacheWriteTokens'),
+    costUsd: metrics.reduce((total, item) => total + (item.costUsd ?? 0), 0),
+    numTurns: sum('numTurns'),
+  };
+}
+
+/** One bounded retry pass over only review-approved failures. */
+export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMetrics> {
+  type RecordVerdict = import('../collectors/record-collector.js').RecordVerdict;
+  const { createRecordCollector } = await import('../collectors/record-collector.js');
+  const { verifyHttpReplay } = await import('../services/http-replay.js');
+  const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+  const reviews = (await loadExploitReviews(dir)).filter((review) => review.verdict === 'retry');
+  if (!reviews.length)
+    return {
+      durationMs: 0,
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      costUsd: 0,
+      numTurns: 0,
+      skipped: true,
+    };
+
+  const retryStarted = Date.now();
+  const previous = JSON.parse(await fs.readFile(path.join(dir, 'record_verification.json'), 'utf8')) as RecordVerdict[];
+  const previousById = new Map(previous.map((verdict) => [verdict.finding_id, verdict]));
+  const container = getOrCreateContainer(input.workflowId, buildSessionMetadata(input), buildContainerConfig(input));
+  const config = await container.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
+  if (isErr(config)) throw deterministicActivityFailure(config.error, 'ConfigurationError');
+  const credentials = config.value?.authentication?.credentials;
+  const configured: Record<string, ReplayVariableDefinition> = {
+    ...(credentials?.username ? { USERNAME: credentials.username } : {}),
+    ...(credentials?.password ? { PASSWORD: credentials.password } : {}),
+    ...(credentials?.totp_secret
+      ? { OTP: { value: credentials.totp_secret, kind: 'totp' as const, refresh: 'each_attempt' as const } }
+      : {}),
+    ...(credentials?.email_login?.address ? { USERNAME: credentials.email_login.address } : {}),
+    ...(credentials?.email_login?.password ? { PASSWORD: credentials.email_login.password } : {}),
+    ...(credentials?.email_login?.totp_secret
+      ? { OTP: { value: credentials.email_login.totp_secret, kind: 'totp' as const, refresh: 'each_attempt' as const } }
+      : {}),
+  };
+  const redactions = configuredCaptureRedactions(credentials);
+  const validIds = new Set(reviews.map((review) => review.finding_id));
+  const xssFindingIds = new Set([...validIds].filter((id) => id.startsWith('XSS-')));
+  const plans = new Map(
+    reviews.flatMap((review) => (review.revised_http_replay ? [[review.finding_id, review.revised_http_replay]] : [])),
+  );
+  const variableRoot = path.join(path.dirname(dir), 'scratchpad', 'replay-variables');
+  const retryVariableDir = path.join(variableRoot, 'retry');
+  const savedVariableDirs = [
+    path.join(variableRoot, 'initial'),
+    path.join(variableRoot, 'expansion'),
+    retryVariableDir,
+  ];
+  const loadSavedDefinitions = async (findingId: string): Promise<Record<string, ReplayVariableDefinition>> => {
+    let definitions: Record<string, ReplayVariableDefinition> = {};
+    for (const directory of savedVariableDirs)
+      definitions = { ...definitions, ...(await loadReplayVariableDefinitions(directory, findingId)) };
+    return definitions;
+  };
+  const collector = createRecordCollector({
+    deliverablesDir: dir,
+    targetUrl: input.webUrl,
+    sourceDir: input.repoPath,
+    validIds,
+    secrets: redactions.map((item) => item.value),
+    verificationPlans: plans,
+    inspectReplayVariables: async (findingId) => Object.keys(await loadSavedDefinitions(findingId)).sort(),
+    repairReplayVariables: async (findingId, plan, updates) =>
+      updateReplayVariables(
+        retryVariableDir,
+        findingId,
+        plan,
+        updates,
+        Object.keys(configured),
+        await loadSavedDefinitions(findingId),
+      ),
+    xssFindingIds,
+    stage: 'record-retry',
+    recordLogPath: recordAgentLogPath(input, 'record-retry'),
+    validateBrowserEvidence: (_findingId, files) => validateRecordBrowserEvidence(input.repoPath, files, retryStarted),
+    verifyReplay: async (findingId, plan) => {
+      const resolution = resolveReplayVariables({
+        definitions: { ...configured, ...(await loadSavedDefinitions(findingId)) },
+        baseUrl: input.webUrl,
+        responseBodies: await loadReplayResponseBodies(dir),
+      });
+      const variableFailures = resolution.diagnostics.filter((item) => item.status !== 'resolved');
+      if (variableFailures.length)
+        return {
+          error: `Replay variables could not be refreshed: ${variableFailures.map((item) => `${item.name}:${item.status}`).join(', ')}.`,
+          variableDiagnostics: resolution.diagnostics as unknown as Array<Record<string, unknown>>,
+        };
+      return verifyHttpReplay({
+        findingId,
+        plan,
+        variables: resolution.values,
+        deliverablesDir: dir,
+        targetUrl: input.webUrl,
+        secrets: [
+          ...redactions.map((item) => item.value),
+          ...Object.values(resolution.values).filter((value) => value !== new URL(input.webUrl).origin),
+        ],
+      });
+    },
+  });
+  const retryInstructions = await loadPromptFragment(
+    'record-retry',
+    input.pipelineTestingMode ?? false,
+    createActivityLogger(),
+    input.promptDir,
+  );
+  const previousFailures = JSON.parse(
+    await fs.readFile(path.join(dir, 'record-failures.json'), 'utf8'),
+  ) as RecordFailure[];
+  const prompt = `${retryInstructions}\n\n<reviewed_retry_batch>\n${JSON.stringify(reviews, null, 2)}\n</reviewed_retry_batch>\n\n<previous_record_failures>\n${JSON.stringify(
+    previousFailures.filter((failure) => validIds.has(failure.finding_id)),
+    null,
+    2,
+  )}\n</previous_record_failures>`;
+  const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
+    const redact = (value: string) =>
+      redactions.reduce((text, item) => text.split(item.value).join(item.placeholder), value);
+    const submitted = new Map(collector.getAll().map((verdict) => [verdict.finding_id, verdict]));
+    const retryVerdicts: RecordVerdict[] = reviews.map((review) => {
+      const prior = previousById.get(review.finding_id);
+      const verdict = submitted.get(review.finding_id);
+      if (!verdict)
+        return {
+          finding_id: review.finding_id,
+          status: 'failed',
+          reason: 'The Record retry agent did not submit a verdict.',
+          capture_ids: [],
+          frontend_status: prior?.frontend_status ?? 'unable_to_determine',
+          frontend_url: prior?.frontend_url ?? null,
+          frontend_trigger: prior?.frontend_trigger ?? null,
+          frontend_reason: prior?.frontend_reason ?? 'The retry did not establish a frontend entry point.',
+          failure_kind: 'missing_verdict',
+          error: 'The Record retry agent did not submit a verdict.',
+          attempts: prior?.attempts ?? 0,
+          replay_history: prior?.replay_history ?? [],
+          partial_capture_ids: [],
+          variable_diagnostics: [],
+          record_log_path: recordAgentLogPath(input, 'record-retry'),
+          stage: 'record-retry',
+        };
+      const normalized = {
+        ...verdict,
+        reason: redact(verdict.reason),
+        frontend_url: verdict.frontend_url === null ? null : redact(verdict.frontend_url),
+        frontend_trigger: verdict.frontend_trigger === null ? null : redact(verdict.frontend_trigger),
+        frontend_reason: redact(verdict.frontend_reason),
+        ...(verdict.error ? { error: redact(verdict.error) } : {}),
+      };
+      normalized.attempts = (prior?.attempts ?? 0) + (normalized.attempts ?? 0);
+      normalized.replay_history = [...(prior?.replay_history ?? []), ...(normalized.replay_history ?? [])];
+      return normalized;
+    });
+    const merged = mergeRecordVerdicts(previous, retryVerdicts);
+    await atomicWrite(path.join(deliverablesPath, 'record_verification.json'), `${JSON.stringify(merged, null, 2)}\n`);
+
+    let verifiedFinalIds: string[] = [];
+    try {
+      const value: unknown = JSON.parse(
+        await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8'),
+      );
+      if (Array.isArray(value)) verifiedFinalIds = value.filter((item): item is string => typeof item === 'string');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const verified = new Set(verifiedFinalIds);
+    for (const id of await applyRecordRetryEvidence(deliverablesPath, retryVerdicts, plans)) verified.add(id);
+    await atomicWrite(
+      path.join(deliverablesPath, 'record_verified_finding_ids.json'),
+      `${JSON.stringify([...verified].sort(), null, 2)}\n`,
+    );
+    await refreshRecordedReportEvidence(deliverablesPath);
+    const failures = await aggregateRecordFailures(deliverablesPath, exploitLogPaths(input));
+    await writeFinalRecordFailureAudit(deliverablesPath, input.workflowId, failures, await loadExploitReviews(dir));
+    const lines = [
+      '# Record and Replay Results',
+      '',
+      ...merged.flatMap((verdict) => [
+        `- **${verdict.finding_id} — ${verdict.status}**: ${verdict.reason}`,
+        verdict.frontend_status === 'available'
+          ? `  Frontend: ${verdict.frontend_url} — ${verdict.frontend_trigger}`
+          : `  Frontend: ${verdict.frontend_status} — ${verdict.frontend_reason}`,
+      ]),
+    ];
+    await atomicWrite(path.join(deliverablesPath, 'record_verification.md'), `${lines.join('\n')}\n`);
+  };
+  return runAgentActivity(
+    'record',
+    input,
+    collector.tools,
+    writeDeliverable,
+    'terminal',
+    false,
+    prompt,
+    'record-retry',
+  );
+}
+
+/** Exclude unresolved findings after the bounded retry, preserving their audit and source records. */
+export async function assertRecordVerificationComplete(input: ActivityInput): Promise<void> {
+  const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+  const exclusions = await finalizeRecordReportAdmission(dir);
+  const failures = await aggregateRecordFailures(dir, exploitLogPaths(input));
+  const known = new Set(failures.map((failure) => failure.finding_id));
+  const synthetic: RecordFailure[] = [];
+  for (const exclusion of exclusions) {
+    if (known.has(exclusion.finding_id)) continue;
+    known.add(exclusion.finding_id);
+    const entries = JSON.parse(await fs.readFile(path.join(dir, exclusion.source_collector), 'utf8')) as Array<
+      Record<string, unknown>
+    >;
+    const entry = entries.find((item) => item.vulnerability_id === exclusion.finding_id) ?? null;
+    synthetic.push({
+      finding_id: exclusion.finding_id,
+      vulnerability_class: exclusion.vulnerability_class,
+      title: String(entry?.title ?? exclusion.finding_id),
+      severity: String(entry?.severity ?? 'unknown'),
+      source_collector: exclusion.source_collector,
+      renumbered_collector: exclusion.source_collector.startsWith('explore_')
+        ? exclusion.source_collector
+        : `${exclusion.vulnerability_class}_exploit_collector_renumbered.json`,
+      source_entry: entry,
+      renumbered_entry: null,
+      exploit_log_path:
+        typeof entry?.exploit_log_path === 'string'
+          ? entry.exploit_log_path
+          : recordAgentLogPath(
+              input,
+              exclusion.source_collector.startsWith('explore_')
+                ? `${exclusion.vulnerability_class}-exploit-expansion`
+                : `${exclusion.vulnerability_class}-exploit`,
+            ),
+      original_http_replay: (entry?.http_replay as RecordFailure['original_http_replay']) ?? null,
+      variable_requirements: {},
+      record_attempts: [
+        {
+          failure_kind: 'report_admission_failed',
+          error: exclusion.reasons.join('; '),
+          attempts: 0,
+          stage: 'record-retry',
+          record_log_path: recordAgentLogPath(input, 'record-retry'),
+        },
+      ],
+      existing_evidence: [],
+      missing_evidence: exclusion.reasons,
+      failure_source: 'record-retry',
+    });
+  }
+  await writeFinalRecordFailureAudit(dir, input.workflowId, [...failures, ...synthetic], await loadExploitReviews(dir));
+  const names = [
+    'record-failures.json',
+    'record-verification-failures.jsonl',
+    'record_report_exclusions.json',
+    'record_verified_finding_ids.json',
+    ...RECORD_CLASSES.flatMap((vulnerabilityClass) => [
+      `${vulnerabilityClass}_recorded_exploitation_evidence.md`,
+      `explore_expansion_${vulnerabilityClass}_recorded_exploitation_evidence.md`,
+      `explore_expansion_${vulnerabilityClass}.md`,
+    ]),
+  ];
+  const files = [];
+  for (const relPath of names) {
+    try {
+      files.push({ relPath, contents: await fs.readFile(path.join(dir, relPath), 'utf8') });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  await writeAndCommitExactFiles(
+    dir,
+    files,
+    'Finalize Record verification and exclude unresolved findings',
+    createActivityLogger(),
+  );
+  if (exclusions.length)
+    createActivityLogger().warn(
+      `Excluded ${exclusions.length} unresolved finding(s) from the report; failure evidence is retained.`,
+    );
 }
 
 /** Execute one report-preparation stage behind the durable post-exploitation checkpoint. */
@@ -1530,6 +2189,10 @@ export async function runPostExploitationStage(
         return runSsrfExploitAgent({ ...input, exploreExpansion: true });
       case 'record-expansion':
         return runRecordAgent({ ...input, exploreExpansion: true });
+      case 'record-failure-review':
+        return runRecordFailureReviewAgent(input);
+      case 'record-retry':
+        return runRecordRetryStage(input);
     }
     const exhaustiveStage: never = stage;
     void exhaustiveStage;
@@ -1593,15 +2256,67 @@ export async function runReportAgent(input: ActivityInput, exploit: boolean): Pr
   let verifiedFindingIds: ReadonlySet<string> | undefined;
   if (exploit) {
     try {
+      const admissionFailures = await validateRecordReportAdmission(deliverablesPath);
+      if (admissionFailures.length) {
+        const failures = await aggregateRecordFailures(deliverablesPath, exploitLogPaths(input));
+        const failureIds = new Set(failures.map((failure) => failure.finding_id));
+        const synthetic: RecordFailure[] = admissionFailures.flatMap((message) => {
+          const [findingId = 'UNKNOWN'] = message.split(':', 1);
+          if (failureIds.has(findingId)) return [];
+          failureIds.add(findingId);
+          const vulnerabilityClass = findingId.startsWith('INJ-')
+            ? 'injection'
+            : findingId.startsWith('XSS-')
+              ? 'xss'
+              : findingId.startsWith('AUTHZ-')
+                ? 'authz'
+                : findingId.startsWith('AUTH-')
+                  ? 'auth'
+                  : findingId.startsWith('SSRF-')
+                    ? 'ssrf'
+                    : 'miscellaneous';
+          return [
+            {
+              finding_id: findingId,
+              vulnerability_class: vulnerabilityClass,
+              title: findingId,
+              severity: 'unknown',
+              source_collector: null,
+              renumbered_collector: null,
+              source_entry: null,
+              renumbered_entry: null,
+              exploit_log_path: null,
+              original_http_replay: null,
+              variable_requirements: {},
+              record_attempts: [
+                { failure_kind: 'report_admission_failed', error: message, attempts: 0, stage: 'record-retry' },
+              ],
+              existing_evidence: [],
+              missing_evidence: [message.slice(message.indexOf(':') + 1).trim()],
+              failure_source: 'record-retry',
+            },
+          ];
+        });
+        await writeFinalRecordFailureAudit(
+          deliverablesPath,
+          input.workflowId,
+          [...failures, ...synthetic],
+          await loadExploitReviews(deliverablesPath),
+        );
+        throw new Error(`Record report admission failed: ${admissionFailures.join('; ')}`);
+      }
       const ids = JSON.parse(
         await fs.readFile(path.join(deliverablesPath, 'record_verified_finding_ids.json'), 'utf8'),
       ) as unknown;
       if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new Error('invalid finding allowlist');
       const packetBackedIds = await loadPacketBackedFindingIds(deliverablesPath);
-      verifiedFindingIds = new Set((ids as string[]).filter((id) => packetBackedIds.has(id)));
-    } catch {
+      const admittedIds = await loadRecordReportFindingIds(deliverablesPath);
+      verifiedFindingIds = new Set((ids as string[]).filter((id) => packetBackedIds.has(id) && admittedIds.has(id)));
+    } catch (error) {
       throw ApplicationFailure.nonRetryable(
-        'Record-stage verification results are missing or invalid; the report cannot include unverified findings.',
+        error instanceof Error
+          ? error.message
+          : 'Record-stage verification results are missing or invalid; the report cannot include unverified findings.',
         'RecordVerificationError',
       );
     }

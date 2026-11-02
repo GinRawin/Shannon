@@ -114,9 +114,9 @@ Exploit Agent 读取对应类别的 exploitation queue，对候选漏洞进行�
 
 ## 7. Record：重放验证与数据包登记
 
-Exploit Agent 为每个 HTTP 可复现的利用保存结构化 `http_replay` 计划，包含请求步骤和至少一条预期状态码及具体影响内容断言。Record 由宿主执行该计划、检查响应断言并保存每次真实请求/响应数据包；单纯有完整数据包不算验证通过。缺少计划、断言失败、执行失败或证明依赖浏览器的项目会进入 `.shannon/deliverables/pending_manual_verification.md`。Record 还会检查对应的前端入口并记录页面 URL 和触发步骤。只有宿主断言通过且抓包完整的利用发现会以 HTTP 验证结果进入最终报告。
+Exploit Agent 为每个利用保存结构化 `http_replay` 计划，包含请求步骤和至少一条预期状态码及具体影响内容断言。Record 由宿主独立执行该计划、检查响应断言并保存每次真实请求/响应数据包；单纯有完整数据包不算验证通过。缺少计划、断言失败或执行失败的项目会进入 `record-failures.json`，按漏洞类别统一复审后进入一轮 Record 重试；每轮每条漏洞最多执行三次 HTTP replay（含首次）。仍失败则写入 `record-verification-failures.jsonl` 和 `record_report_exclusions.json`，保留原始记录并从报告中排除，其余已验证漏洞继续生成报告。XSS 还必须有实际 JavaScript 执行证据。
 
-主要输出包括 `record_verification.json`、`pending_manual_verification.md` 和各类别的 `*_recorded_exploitation_evidence.md`。采集到的 HTTP 数据包保存在 `.shannon/deliverables/http-exchanges/`。
+主要输出包括 `record_verification.json`、`record-failures.json`、`exploit_review_<class>.json`、`record-verification-failures.jsonl` 和各类别的 `*_recorded_exploitation_evidence.md`。采集到的 HTTP 数据包保存在 `.shannon/deliverables/http-exchanges/`。
 
 ## 8. Explore：模板扩展
 

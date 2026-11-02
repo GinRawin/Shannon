@@ -38,6 +38,12 @@ interface ReplayEntry {
   evidence_of_vulnerability?: string;
   exploitation_steps?: string[];
   browser_evidence_files?: string[];
+  browser_verification?: {
+    assertion_type: string;
+    expected: string;
+    observed: string;
+    evidence_files: string[];
+  };
 }
 export interface CaptureRedaction {
   value: string;
@@ -362,12 +368,12 @@ export async function loadPacketBackedFindingIds(dir: string): Promise<ReadonlyS
   const eligible = new Set<string>();
   for (const entry of entries) {
     if (entry.http_evidence_display !== 'include' || !entry.http_evidence_ids?.length) continue;
-    const entryId = entry.vulnerability_id ?? '';
-    // Original findings are rendered under the renumbered ID; expansion findings already use
-    // that final namespace and therefore fall through to their own ID.
-    const reportId = taskToFinding.get(entryId) ?? entryId;
-    const taskId = taskByFinding.get(reportId) ?? entryId;
-    if (!reportId) continue;
+    // Both collectors loaded above already use report IDs. Applying the forward task map
+    // again can resolve a colliding numeric ID to a different, unverified task. Only reverse
+    // the report ID to locate its original capture; expansion IDs have a queued identity map.
+    const reportId = entry.vulnerability_id;
+    const taskId = reportId ? taskByFinding.get(reportId) : undefined;
+    if (!reportId || !taskId) continue;
     const captures = capturesByTask.get(taskId) ?? [];
     if (
       captures.length === entry.http_evidence_ids.length &&
@@ -451,6 +457,9 @@ export async function attachHttpEvidence(
                 items: evidenceMarkdownItems(
                   [
                     entry.proof_of_impact ?? entry.evidence_of_vulnerability ?? '',
+                    ...(entry.browser_verification
+                      ? [`Record browser assertion passed: ${entry.browser_verification.assertion_type}; expected “${entry.browser_verification.expected}”, observed “${entry.browser_verification.observed}”.`]
+                      : []),
                     ...(entry.browser_evidence_files ?? []).map((file) => `浏览器证据文件：${file}`),
                   ].join('\n\n'),
                 ).map((item) => {

@@ -1,0 +1,1 @@
+This is a pipeline wiring test for offline Record failure review. Do not access the target. Submit only the review fixtures supplied by the test.

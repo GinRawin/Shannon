@@ -93,6 +93,27 @@ function boundedToken(value: unknown, max = 120): string | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+/** Diagnostics for setup, thrown prompt errors, and compaction failures without an assistant turn. */
+export interface SafeExecutionFailureDetails extends SafeDiagnostic {
+  readonly errorMessageLength: number;
+  readonly errorMessageSnippet?: string;
+}
+
+export function safeExecutionFailureDetails(error: unknown): SafeExecutionFailureDetails {
+  const record = typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : undefined;
+  const message = typeof error === 'string' ? error : typeof record?.message === 'string' ? record.message : '';
+  const errorName = boundedToken(record?.name);
+  const rawCode = record?.code;
+  const errorCode = typeof rawCode === 'number' ? rawCode : boundedToken(rawCode, 60);
+  const errorMessageSnippet = debugProviderErrorsEnabled() ? boundedSnippet(message) : undefined;
+  return {
+    ...(errorName !== undefined && { errorName }),
+    ...(errorCode !== undefined && { errorCode }),
+    errorMessageLength: message.length,
+    ...(errorMessageSnippet !== undefined && { errorMessageSnippet }),
+  };
+}
+
 function safeDiagnostics(message: AssistantMessage): SafeDiagnostic[] | undefined {
   const raw = message.diagnostics;
   if (!Array.isArray(raw) || raw.length === 0) return undefined;

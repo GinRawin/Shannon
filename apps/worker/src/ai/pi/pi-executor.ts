@@ -49,7 +49,13 @@ import { PI_RETRY_SETTINGS } from './retry-settings.js';
 import { createGlobTool, createTodoWriteTool } from './session-tools.js';
 import { createTaskTool } from './task-tool.js';
 import { TraceEmitter } from './trace-emitter.js';
-import { providerTurnError, type SafeProviderTurnDetails, safeProviderTurnDetails } from './turn-error.js';
+import {
+  providerTurnError,
+  type SafeExecutionFailureDetails,
+  type SafeProviderTurnDetails,
+  safeExecutionFailureDetails,
+  safeProviderTurnDetails,
+} from './turn-error.js';
 
 declare global {
   var SHANNON_DISABLE_LOADER: boolean | undefined;
@@ -164,6 +170,7 @@ async function writeErrorLog(
   turns: number,
   retryable: boolean,
   providerDetails?: SafeProviderTurnDetails,
+  executionDetails?: SafeExecutionFailureDetails,
 ): Promise<void> {
   try {
     const errorLog = {
@@ -174,6 +181,7 @@ async function writeErrorLog(
       turns,
       retryable,
       ...(providerDetails !== undefined && { provider: providerDetails }),
+      ...(executionDetails !== undefined && { execution: executionDetails }),
     };
     const logPath = path.join(deliverablesDir(sourceDir), 'error.log');
     await fs.appendFile(logPath, `${JSON.stringify(errorLog)}\n`);
@@ -249,9 +257,10 @@ export async function runPiPrompt(
   const basePrompt = context ? `${context}\n\n${prompt}` : prompt;
   // Inject at execution time: live-mounted prompt files of an existing worker
   // are deliberately left untouched. Applies only to newly built workers.
-  const evidenceDirective = agentName?.endsWith('-exploit') && callerTools?.some((tool) => tool.name === 'capture_http_request')
-    ? '\n\nEvidence and manual reproduction: YOU (the exploit agent) must choose verification_method (http/browser/mixed/other), http_evidence_display (include/omit), and a specific http_evidence_reason in add_exploit. When including HTTP, select only the actual proving exchanges in http_evidence_ids. When omitting HTTP, leave those IDs empty and preserve original browser/other observations in proof_of_impact, optionally browser_evidence_files. Use shannon-curl or capture_http_request for the validation itself; both register receipts in this collector. They send and record the SAME invocation. Do not repeat state-changing or browser proofs merely to obtain HTTP evidence. reproduction_capture_ids independently selects actual captured commands in execution order, including setup/cleanup; it defaults to displayed HTTP IDs and can be empty for manual/browser proof. The host records argv and file dependencies; commands do NOT need verify_http_replay to enter reproduce.sh. Browser reproduction stays manual. verify_http_replay is optional, sends real requests, and must never be used solely to satisfy capture/script publication. list_http_evidence lists existing IDs without network requests.\n'
-    : '';
+  const evidenceDirective =
+    agentName?.endsWith('-exploit') && callerTools?.some((tool) => tool.name === 'capture_http_request')
+      ? '\n\nEvidence and manual reproduction: YOU (the exploit agent) must choose verification_method (http/browser/mixed/other), http_evidence_display (include/omit), and a specific http_evidence_reason in add_exploit. When including HTTP, select only the actual proving exchanges in http_evidence_ids. When omitting HTTP, leave those IDs empty and preserve original browser/other observations in proof_of_impact, optionally browser_evidence_files. Use shannon-curl or capture_http_request for the validation itself; both register receipts in this collector. They send and record the SAME invocation. Do not repeat state-changing or browser proofs merely to obtain HTTP evidence. reproduction_capture_ids independently selects actual captured commands in execution order, including setup/cleanup; it defaults to displayed HTTP IDs and can be empty for manual/browser proof. The host records argv and file dependencies; commands do NOT need verify_http_replay to enter reproduce.sh. Browser reproduction stays manual. verify_http_replay is optional, sends real requests, and must never be used solely to satisfy capture/script publication. list_http_evidence lists existing IDs without network requests.\n'
+      : '';
   const fullPrompt = (submitTool?.directive ? basePrompt + submitTool.directive : basePrompt) + evidenceDirective;
 
   // 2. Set up progress and audit infrastructure
@@ -292,8 +301,9 @@ export async function runPiPrompt(
   // cost includes sub-agent spend (their getSessionStats is separate from ours).
   const childUsage: ChildUsage = { cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let pendingError: PentestError | null = null;
-  // Keep a child's provider evidence as well as a top-level failed turn's details.
+  // Parent failures remain terminal; child failures can be resolved by an explicit successful retry.
   let pendingProviderDetails: SafeProviderTurnDetails | null = null;
+  const childFailures = new Map<PentestError, SafeProviderTurnDetails | undefined>();
   const customTools: ToolDefinition[] = [
     createTaskTool({
       httpEvidenceTools: callerTools?.filter((tool) =>
@@ -304,9 +314,9 @@ export async function runPiPrompt(
       cwd: sourceDir,
       parentAgentName,
       onFailure: (error, details) => {
-        pendingError ??= error;
-        pendingProviderDetails ??= details ?? null;
+        childFailures.set(error, details);
       },
+      onRecovery: (error) => childFailures.delete(error),
       ...(workflowLogPath !== undefined && { workflowLogPath }),
       ...(traceEmitter !== undefined && {
         onDelegationStart: (child: string) => traceEmitter.delegationStart(child),
@@ -421,6 +431,11 @@ export async function runPiPrompt(
 
     // 7. Surface any error captured during the run.
     if (pendingError) throw pendingError;
+    const unresolvedChild = childFailures.entries().next().value;
+    if (unresolvedChild !== undefined) {
+      pendingProviderDetails = unresolvedChild[1] ?? null;
+      throw unresolvedChild[0];
+    }
 
     // 8. Read usage/cost and final text.
     const usage = totalUsage(session, childUsage);
@@ -462,7 +477,17 @@ export async function runPiPrompt(
     if (pendingProviderDetails) {
       console.log(`  provider-turn: ${JSON.stringify(pendingProviderDetails)}`);
     }
-    await writeErrorLog(sourceDir, safeError, duration, turnCount, retryable, pendingProviderDetails ?? undefined);
+    const executionDetails = safeExecutionFailureDetails(err);
+    console.log(`  execution-error: ${JSON.stringify(executionDetails)}`);
+    await writeErrorLog(
+      sourceDir,
+      safeError,
+      duration,
+      turnCount,
+      retryable,
+      pendingProviderDetails ?? undefined,
+      executionDetails,
+    );
 
     // A failed agent still spent money — on its own turns and, since Shannon's
     // prompts delegate the heavy work, mostly on `task` sub-agents. Both count
