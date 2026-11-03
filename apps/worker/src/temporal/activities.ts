@@ -1315,6 +1315,7 @@ async function runExploitAgentWithCollector(
 
   const collector = createExploitCollector({
     vulnClass,
+    sourceDir: input.repoPath,
     validIds,
     validateReplayVariables: async (findingId, plan, browserPlan) => {
       try {

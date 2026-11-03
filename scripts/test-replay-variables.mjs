@@ -147,7 +147,7 @@ try {
   await writeFile(`${privateDir}/AUTH-02.json`, JSON.stringify({ ...refresh('each_attempt'), OLD_TOKEN: expired }), { mode: 0o600 });
   const definitions = await loadReplayVariableDefinitions(privateDir, 'AUTH-02');
   const exploitCollector = createExploitCollector({
-    vulnClass: 'auth', validIds: new Set(['AUTH-02', 'AUTH-03']),
+    vulnClass: 'auth', sourceDir: temporary, validIds: new Set(['AUTH-02', 'AUTH-03']),
     validateReplayVariables: async (findingId, httpPlan, savedBrowserPlan) => {
       const names = missingReplayVariables(httpPlan,
         await loadReplayVariableDefinitions(privateDir, findingId), [], savedBrowserPlan);

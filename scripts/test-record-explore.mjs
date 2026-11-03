@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createExploitReviewCollector } from '../apps/worker/dist/collectors/exploit-review-collector.js';
+import { validateExploitCodeLocationPaths } from '../apps/worker/dist/collectors/exploit-collector.js';
 import { validateRecordTarget } from '../apps/worker/dist/collectors/record-collector.js';
 import { AGENT_VALIDATORS } from '../apps/worker/dist/session-manager.js';
 import {
@@ -158,6 +159,7 @@ for (const candidate of [
 }
 
 const dir = await mkdtemp(path.join(tmpdir(), 'shannon-explore-test-'));
+const outsideSink = `${dir}-outside.js`;
 try {
   const expansionQueueName = 'explore_expansion_injection_vuln_queue.json';
   const validatorLogger = { warn() {} };
@@ -208,6 +210,34 @@ try {
 
   await writeFile(path.join(dir, 'seed.js'), `${'danger()\n'.repeat(10)}danger()\n`);
   await writeFile(path.join(dir, 'other.js'), 'danger()\n'.repeat(50));
+  await mkdir(path.join(dir, 'sink-directory'));
+  await writeFile(outsideSink, 'outside()\n');
+  await symlink(outsideSink, path.join(dir, 'outside-link.js'));
+  assert.deepEqual(
+    await validateExploitCodeLocationPaths(dir, [
+      { workspace_relative_file_path: 'seed.js', line_number: 11 },
+      { workspace_relative_file_path: 'missing.js', line_number: 1 },
+      { workspace_relative_file_path: 'sink-directory', line_number: 1 },
+      { workspace_relative_file_path: 'outside-link.js', line_number: 1 },
+    ]),
+    [
+      {
+        source_file: 'missing.js',
+        reason: 'Code location path does not exist in the assessed source tree.',
+      },
+      {
+        source_file: 'outside-link.js',
+        reason: 'Code location path resolves outside the assessed source tree.',
+      },
+      {
+        source_file: 'sink-directory',
+        reason: 'Code location path is not a regular file in the assessed source tree.',
+      },
+    ],
+    'Exploit must reject code location paths that do not resolve to source files',
+  );
+  console.log('PASS Exploit validates code location paths during evidence submission');
+
   const result = await searchExploreTemplates(dir, [{
     finding_id: 'F-1', vulnerability_class: 'xss', sink_file: 'seed.js', sink_line: 11,
     regex: 'danger\\(\\)', rationale: 'test',
@@ -274,4 +304,5 @@ try {
   assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'record_verified_finding_ids.json'), 'utf8')), ['INJ-02']);
 } finally {
   await rm(dir, { recursive: true, force: true });
+  await rm(outsideSink, { force: true });
 }

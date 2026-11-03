@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { ExploreTemplate } from '../collectors/explore-collector.js';
 
@@ -109,6 +109,26 @@ function isInside(root: string, candidate: string): boolean {
   return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
+async function resolveExploreSinkFile(
+  root: string,
+  sinkFile: string,
+): Promise<{ relativePath: string } | { reason: string }> {
+  let sinkReal: string;
+  try {
+    sinkReal = await realpath(path.resolve(root, sinkFile));
+  } catch {
+    return { reason: 'Sink path does not exist in the assessed source tree.' };
+  }
+  if (!isInside(root, sinkReal)) return { reason: 'Sink path resolves outside the assessed source tree.' };
+  try {
+    if (!(await stat(sinkReal)).isFile())
+      return { reason: 'Sink path is not a regular file in the assessed source tree.' };
+  } catch {
+    return { reason: 'Sink path does not exist in the assessed source tree.' };
+  }
+  return { relativePath: path.relative(root, sinkReal) };
+}
+
 function parseJsonMatches(output: string, root: string, template: ExploreTemplate): ExploreSearchMatch[] {
   const matches: ExploreSearchMatch[] = [];
   for (const line of output.split('\n')) {
@@ -211,23 +231,15 @@ export async function searchExploreTemplates(
       rejected.push({ template, reason: 'Template is too long or contains an invalid byte.' });
       continue;
     }
-    const sinkAbsolute = path.resolve(root, template.sink_file);
-    let sinkReal: string;
-    try {
-      sinkReal = await realpath(sinkAbsolute);
-    } catch {
-      rejected.push({ template, reason: 'Sink path does not exist in the assessed source tree.' });
+    const resolvedSink = await resolveExploreSinkFile(root, template.sink_file);
+    if ('reason' in resolvedSink) {
+      rejected.push({ template, reason: resolvedSink.reason });
       continue;
     }
-    if (!isInside(root, sinkReal)) {
-      rejected.push({ template, reason: 'Sink path resolves outside the assessed source tree.' });
-      continue;
-    }
-    const relativeSink = path.relative(root, sinkReal);
     let sinkMatches: ExploreSearchMatch[];
     let allMatches: ExploreSearchMatch[];
     try {
-      sinkMatches = parseJsonMatches(await runRipgrep(root, template.regex, relativeSink), root, template);
+      sinkMatches = parseJsonMatches(await runRipgrep(root, template.regex, resolvedSink.relativePath), root, template);
       if (!sinkMatches.some((match) => match.match_line === template.sink_line)) {
         rejected.push({ template, reason: 'The supplied regex does not match the recorded sink line.' });
         continue;

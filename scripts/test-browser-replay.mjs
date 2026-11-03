@@ -216,7 +216,9 @@ try {
   });
   await check('Exploit and review require host-executable XSS plans and Record checkpoints browser artifacts', async () => {
     const exploit = { status: 'exploited', vulnerability_id: 'XSS-12', title: 'Fixture', vulnerable_location: '/', overview: 'Fixture', severity: 'high', severity_rationale: 'Fixture', impact: 'JS execution', exploitation_steps: ['Trigger'], proof_of_impact: 'Dialog', verification_method: 'mixed', http_evidence_display: 'include', http_evidence_reason: 'Fixture', http_replay: httpPlan };
-    const collector = createExploitCollector({ vulnClass: 'xss', validIds: new Set(['XSS-12']) });
+    const collector = createExploitCollector({
+      vulnClass: 'xss', sourceDir: temporary, validIds: new Set(['XSS-12']),
+    });
     assert.equal((await invoke(collector, 'add_exploit', exploit)).status, 'error');
     assert.equal((await invoke(collector, 'add_exploit', { ...exploit, browser_replay: plan })).status, 'success');
     const review = createExploitReviewCollector(new Set(['XSS-12']));

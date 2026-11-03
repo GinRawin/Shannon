@@ -230,7 +230,8 @@ try {
     assert.equal(created, false);
   });
 
-  const exploit = { status: 'exploited', vulnerability_id: 'INJ-02', title: 'Private endpoint access', vulnerable_location: '/protected', overview: 'Fixture', severity: 'high', severity_rationale: 'Fixture', impact: 'Reads private record', exploitation_steps: ['Read record'], proof_of_impact: 'private-audit-record', verification_method: 'http', http_evidence_display: 'include', http_evidence_reason: 'The protected record response demonstrates unauthorized access.', http_replay: plan };
+  await writeFile(`${temporary}/verified-source.js`, 'const verified = true;\n');
+  const exploit = { status: 'exploited', vulnerability_id: 'INJ-02', title: 'Private endpoint access', vulnerable_location: '/protected', overview: 'Fixture', severity: 'high', severity_rationale: 'Fixture', impact: 'Reads private record', exploitation_steps: ['Read record'], proof_of_impact: 'private-audit-record', verification_method: 'http', http_evidence_display: 'include', http_evidence_reason: 'The protected record response demonstrates unauthorized access.', http_replay: plan, code_locations: [{ workspace_relative_file_path: 'verified-source.js', line_number: 1 }] };
   const invoke = async (collector, name, input, signal) => {
     const tool = collector.tools.find((tool) => tool.name === name);
     assert.ok(tool, `Missing tool ${name}`);
@@ -252,14 +253,27 @@ try {
     http_evidence_receipts: receipts,
   });
   await check('Exploit submits the exact observed request plan without an extra target replay', async () => {
-    const collector = createExploitCollector({ vulnClass: 'injection', validIds: new Set(['INJ-02']) });
+    const collector = createExploitCollector({
+      vulnClass: 'injection', sourceDir: temporary, validIds: new Set(['INJ-02']),
+    });
     const before = received.length;
     assert.equal((await invoke(collector, 'add_exploit', exploit)).status, 'success');
     assert.equal(received.length, before);
     assert.equal(hasVerifiedReplay(collector.getAll()[0]), false);
     assert.deepEqual(collector.tools.map((tool) => tool.name), ['add_exploit']);
+    const invalidLocationCollector = createExploitCollector({
+      vulnClass: 'injection', sourceDir: temporary, validIds: new Set(['INJ-02']),
+    });
+    const invalidLocation = await invoke(invalidLocationCollector, 'add_exploit', {
+      ...exploit,
+      code_locations: [{ workspace_relative_file_path: 'missing-source.js', line_number: 1 }],
+    });
+    assert.equal(invalidLocation.status, 'error');
+    assert.match(invalidLocation.message, /does not exist in the assessed source tree/);
     const missing = { ...exploit }; delete missing.http_replay;
-    assert.equal((await invoke(createExploitCollector({ vulnClass: 'injection', validIds: new Set(['INJ-02']) }), 'add_exploit', missing)).status, 'error');
+    assert.equal((await invoke(createExploitCollector({
+      vulnClass: 'injection', sourceDir: temporary, validIds: new Set(['INJ-02']),
+    }), 'add_exploit', missing)).status, 'error');
   });
   await check('Record requires its own passing host replay and rejects borrowed capture IDs', async () => {
     const collector = createRecordCollector(recordOptions(dir));
