@@ -1,5 +1,6 @@
 /** File names for the isolated Explore-expansion queues. */
 
+import { REF_PREFIX } from '../ai/reconciliation/refs.js';
 import type { ReconciliationClass } from '../types/reconciliation.js';
 
 export function expansionVulnQueueFilename(vulnerabilityClass: ReconciliationClass): string {
@@ -34,6 +35,19 @@ export function expansionSubmissionAuditFilename(vulnerabilityClass: Reconciliat
   return `explore_expansion_${vulnerabilityClass}_submission_audit.json`;
 }
 
-export function isExpansionVulnQueueFilename(filename: string | undefined): boolean {
-  return filename !== undefined && /^explore_expansion_[a-z]+_vuln_queue\.json$/.test(filename);
+export function nextExpansionExploitTaskNumber(
+  vulnerabilityClass: ReconciliationClass,
+  existingFindingIds: Iterable<string>,
+): number {
+  const pattern = new RegExp(`^${REF_PREFIX[vulnerabilityClass]}-(\\d+)$`);
+  let maximum = 0;
+  for (const id of existingFindingIds) {
+    const match = pattern.exec(id);
+    if (match !== null) maximum = Math.max(maximum, Number(match[1]));
+  }
+  return maximum + 1;
+}
+
+export function expansionExploitTaskId(vulnerabilityClass: ReconciliationClass, taskNumber: number): string {
+  return `${REF_PREFIX[vulnerabilityClass]}-${String(taskNumber).padStart(2, '0')}`;
 }

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createExploitReviewCollector } from '../apps/worker/dist/collectors/exploit-review-collector.js';
 import { validateRecordTarget } from '../apps/worker/dist/collectors/record-collector.js';
+import { AGENT_VALIDATORS } from '../apps/worker/dist/session-manager.js';
 import {
   applyExploitReviews,
   mergeRecordVerdicts,
@@ -21,8 +22,15 @@ import {
   locationMatchesExploreSearch,
   searchExploreTemplates,
 } from '../apps/worker/dist/services/explore-search.js';
+import {
+  expansionExploitTaskId,
+  nextExpansionExploitTaskNumber,
+} from '../apps/worker/dist/services/expansion-queues.js';
 
 const target = 'https://example.test';
+assert.equal(nextExpansionExploitTaskNumber('injection', ['INJ-VULN-41', 'INJ-01', 'INJ-09']), 10);
+assert.equal(nextExpansionExploitTaskNumber('authz', ['AUTHZ-02', 'AUTH-99']), 3);
+assert.equal(expansionExploitTaskId('authz', 3), 'AUTHZ-03');
 validateRecordTarget(['-H', 'X-Test: https://other.test', '--url', `${target}/x`], target);
 validateRecordTarget(['-skS', '-H', 'X-Test: fixture', `${target}/x`], target);
 validateRecordTarget(['-sSHX-Test: https://other.test', `${target}/x`], target);
@@ -151,6 +159,17 @@ for (const candidate of [
 
 const dir = await mkdtemp(path.join(tmpdir(), 'shannon-explore-test-'));
 try {
+  const expansionQueueName = 'explore_expansion_injection_vuln_queue.json';
+  const validatorLogger = { warn() {} };
+  assert.equal(
+    await AGENT_VALIDATORS['injection-vuln'](dir, validatorLogger, expansionQueueName),
+    false,
+    'a missing expansion queue must fail validation instead of becoming a silent empty result',
+  );
+  await writeFile(path.join(dir, expansionQueueName), JSON.stringify({ vulnerabilities: [] }));
+  assert.equal(await AGENT_VALIDATORS['injection-vuln'](dir, validatorLogger, expansionQueueName), true);
+  console.log('PASS Explore expansion requires an explicit structured queue, including empty results');
+
   const initialVariables = path.join(dir, 'variables', 'initial');
   const retryVariables = path.join(dir, 'variables', 'retry');
   await mkdir(initialVariables, { recursive: true });

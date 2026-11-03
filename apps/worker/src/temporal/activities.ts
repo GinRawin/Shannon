@@ -20,9 +20,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ApplicationFailure, Context, heartbeat } from '@temporalio/activity';
 import { syncPermissionSystemConfig } from '../ai/pi/permission-system.js';
-import { isExpansionTargetId, isProducerId } from '../ai/reconciliation/refs.js';
-import type { QueueIdPolicy } from '../ai/queue-schemas.js';
 import { writePlaywrightStealthConfig } from '../ai/playwright-config-writer.js';
+import type { QueueIdPolicy } from '../ai/queue-schemas.js';
+import { isExpansionTargetId, isProducerId } from '../ai/reconciliation/refs.js';
 import { agentLogPath } from '../audit/actor-projection.js';
 import { AuditSession } from '../audit/index.js';
 import type { ResumeAttempt } from '../audit/metrics-tracker.js';
@@ -45,14 +45,16 @@ import { compactReportFindings as compactReportFindingsService } from '../servic
 import { getContainer, getOrCreateContainer, removeContainer } from '../services/container.js';
 import { classifyErrorForTemporal, PentestError } from '../services/error-handling.js';
 import { RenumberError, writeAndCommitExactFiles } from '../services/exact-output-commit.js';
-import { ExploitationCheckerService } from '../services/exploitation-checker.js';
-import { locationMatchesExploreSearch } from '../services/explore-search.js';
 import {
   expansionAnalysisFilename,
   expansionExploitQueueFilename,
+  expansionExploitTaskId,
   expansionSubmissionAuditFilename,
   expansionVulnQueueFilename,
+  nextExpansionExploitTaskNumber,
 } from '../services/expansion-queues.js';
+import { ExploitationCheckerService } from '../services/exploitation-checker.js';
+import { locationMatchesExploreSearch } from '../services/explore-search.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
 import { executeGitCommandWithRetry } from '../services/git-manager.js';
 import {
@@ -644,7 +646,11 @@ interface CandidateCodeLocation {
 }
 
 function hasValidLocationRange(location: CandidateCodeLocation): boolean {
-  if (typeof location.file !== 'string' || !Number.isInteger(location.start_line) || (location.start_line as number) < 1)
+  if (
+    typeof location.file !== 'string' ||
+    !Number.isInteger(location.start_line) ||
+    (location.start_line as number) < 1
+  )
     return false;
   const startLine = location.start_line as number;
   const endLine = location.end_line === undefined ? startLine : location.end_line;
@@ -696,6 +702,7 @@ async function runVulnAgentWithCollector(
   let expansionTargets: ExpansionTarget[] = [];
   let priorQueueDocument: { vulnerabilities?: Array<Record<string, unknown> & { ID?: string }> } = {};
   const priorProducerIds = new Set<string>();
+  const priorFinalFindingIds = new Set<string>();
   const expansionQueueFilename = input.exploreExpansion ? expansionVulnQueueFilename(vulnClass) : undefined;
   if (input.exploreExpansion) {
     const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
@@ -757,6 +764,9 @@ async function runVulnAgentWithCollector(
     const exploitEntries = JSON.parse(exploitCollectorRaw) as Array<
       Record<string, unknown> & { vulnerability_id?: string }
     >;
+    for (const entry of exploitEntries) {
+      if (typeof entry.vulnerability_id === 'string') priorFinalFindingIds.add(entry.vulnerability_id);
+    }
     const entryById = new Map(exploitEntries.map((entry) => [entry.vulnerability_id, entry]));
     const grouped = new Map<string, typeof classMatches>();
     for (const match of classMatches) grouped.set(match.finding_id, [...(grouped.get(match.finding_id) ?? []), match]);
@@ -834,20 +844,17 @@ async function runVulnAgentWithCollector(
           queueError = error instanceof Error ? error.message : String(error);
         }
       }
-      // The submit tool owns the queue file. Materialize an empty queue when the agent made no
-      // submission so a completed expansion pass always leaves an explicit, inspectable result.
       if (queueStatus !== 'parsed') {
-        await atomicWrite(queuePath, `${JSON.stringify({ vulnerabilities: [] }, null, 2)}\n`);
+        throw new Error(queueError ?? `Expansion queue ${path.basename(queuePath)} is missing or invalid.`);
       }
       const targetsByTargetId = new Map(expansionTargets.map((target) => [target.target_id, target]));
       const allExpansionMatches = expansionTargets.flatMap((target) => target.matches);
-      const usedTaskIds = new Set(
-        (priorQueueDocument.vulnerabilities ?? [])
-          .map((entry) => entry.ID)
-          .filter((id): id is string => typeof id === 'string'),
+      let nextTaskNumber = nextExpansionExploitTaskNumber(
+        vulnClass,
+        [...(priorQueueDocument.vulnerabilities ?? []).map((entry) => entry.ID), ...priorFinalFindingIds].filter(
+          (id): id is string => typeof id === 'string',
+        ),
       );
-      const idPattern = new RegExp(`^${EXPANSION_ID_PREFIX[vulnClass]}-(\\d+)$`);
-      let nextTaskId = [...usedTaskIds].reduce((max, id) => Math.max(max, Number(idPattern.exec(id)?.[1] ?? 0)), 0) + 1;
       const rejectedCounts: Record<ExpansionRejectionReason, number> = {
         reused_producer_id: 0,
         unknown_target_id: 0,
@@ -987,7 +994,7 @@ async function runVulnAgentWithCollector(
         }
 
         const { ID: _producerId, ...candidate } = entry;
-        const assignedId = `${EXPANSION_ID_PREFIX[vulnClass]}-${String(nextTaskId++).padStart(2, '0')}`;
+        const assignedId = expansionExploitTaskId(vulnClass, nextTaskNumber++);
         independentCandidates.push({ ...candidate, ID: assignedId });
         auditEntries.push({
           index,
@@ -1031,9 +1038,8 @@ async function runVulnAgentWithCollector(
             ...(queueError !== undefined && { queue_error: queueError }),
             submitted_count: submitted.length,
             accepted_count: auditEntries.filter((entry) => entry.accepted).length,
-            target_enrichment_count: auditEntries.filter(
-              (entry) => entry.classification === 'target_enrichment',
-            ).length,
+            target_enrichment_count: auditEntries.filter((entry) => entry.classification === 'target_enrichment')
+              .length,
             independent_candidate_count: auditEntries.filter(
               (entry) => entry.classification === 'independent_candidate',
             ).length,
@@ -1147,9 +1153,7 @@ async function runVulnAgentWithCollector(
       2,
     )}\n</template_expansion_pass>`;
   }
-  const auditAgentName = input.exploreExpansion
-    ? (`${vulnClass}-vuln-expansion` as PostExploitationStage)
-    : undefined;
+  const auditAgentName = input.exploreExpansion ? (`${vulnClass}-vuln-expansion` as PostExploitationStage) : undefined;
   return runAgentActivity(
     agentName,
     input,
@@ -2217,9 +2221,7 @@ export async function runRecordFailureReviewAgent(input: ActivityInput): Promise
       const expansion = JSON.parse(
         await fs.readFile(expansionPath, 'utf8'),
       ) as import('../collectors/exploit-collector.js').AddExploitInput[];
-      const candidateQueue = await readExploitQueue(
-        path.join(dir, expansionExploitQueueFilename(vulnerabilityClass)),
-      );
+      const candidateQueue = await readExploitQueue(path.join(dir, expansionExploitQueueFilename(vulnerabilityClass)));
       const rendered = renderExploitDeliverable(vulnerabilityClass, expansion, candidateQueue.idToType);
       await atomicWrite(path.join(dir, `explore_expansion_${vulnerabilityClass}_exploitation_evidence.md`), rendered);
       await atomicWrite(

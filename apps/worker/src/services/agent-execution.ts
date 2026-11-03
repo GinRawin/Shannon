@@ -275,11 +275,7 @@ export class AgentExecutionService {
     try {
       // 5. Execute agent. Vuln agents get a submit tool that captures the structured
       //    exploitation queue (pi has no JSON-schema output format).
-      const submitTool = createQueueSubmitTool(
-        agentName,
-        distributedConfig?.exploit ?? true,
-        input.queueIdPolicy,
-      );
+      const submitTool = createQueueSubmitTool(agentName, distributedConfig?.exploit ?? true, input.queueIdPolicy);
       const result: PiPromptResult = await runPiPrompt(
         prompt,
         repoPath,
@@ -309,6 +305,21 @@ export class AgentExecutionService {
           category: categoryForErrorCode(errorCode),
           retryable: result.retryable ?? true,
           context: { agentName, originalError: result.error },
+        });
+      }
+
+      if (submitTool && result.structuredOutput === undefined) {
+        return this.failAgent(agentName, deliverablesPath, auditSession, logger, {
+          attemptNumber,
+          result,
+          auditAgentName,
+          gitPaths,
+          rollbackReason: 'validation failure',
+          errorMessage: `Agent ${agentName} completed without calling submit_exploitation_queue`,
+          errorCode: ErrorCode.OUTPUT_VALIDATION_FAILED,
+          category: 'validation',
+          retryable: true,
+          context: { agentName, queueFilename: effectiveQueueFilename },
         });
       }
 
