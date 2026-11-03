@@ -14,6 +14,20 @@ export interface ExploreSearchMatch {
   excerpt: string;
 }
 
+/** Per-template accounting so a truncated scan can be diagnosed without re-running ripgrep. */
+export interface ExploreTemplateSearchStat {
+  finding_id: string;
+  vulnerability_class: string;
+  sink_file: string;
+  sink_line: number;
+  regex: string;
+  total_hits: number;
+  excluded_seed: number;
+  duplicate_hits: number;
+  returned_hits: number;
+  truncated: boolean;
+}
+
 interface CandidateCodeLocation {
   file?: unknown;
   start_line?: unknown;
@@ -185,10 +199,12 @@ export async function searchExploreTemplates(
   matches: ExploreSearchMatch[];
   rejected: Array<{ template: ExploreTemplate; reason: string }>;
   truncated: boolean;
+  templates: ExploreTemplateSearchStat[];
 }> {
   const root = await realpath(sourceDir);
-  const matches: ExploreSearchMatch[] = [];
   const rejected: Array<{ template: ExploreTemplate; reason: string }> = [];
+  const stats: ExploreTemplateSearchStat[] = [];
+  const perTemplate: ExploreSearchMatch[][] = [];
   let truncated = false;
   for (const template of templates) {
     if (template.regex.length > 300 || template.regex.includes('\0')) {
@@ -221,23 +237,78 @@ export async function searchExploreTemplates(
       rejected.push({ template, reason: error instanceof Error ? error.message : 'Search failed.' });
       continue;
     }
-    let templateCount = 0;
+    const seen = new Set<string>();
+    const selected: ExploreSearchMatch[] = [];
+    let excludedSeed = 0;
+    let duplicates = 0;
     for (const match of allMatches) {
       // The seed itself is provenance, not a newly discovered location.
-      if (match.match_file === template.sink_file && match.match_line === template.sink_line) continue;
-      if (matches.length >= MAX_TOTAL_MATCHES || templateCount >= MAX_MATCHES_PER_TEMPLATE) {
+      if (match.match_file === template.sink_file && match.match_line === template.sink_line) {
+        excludedSeed++;
+        continue;
+      }
+      const key = `${match.match_file}:${match.match_line}`;
+      if (seen.has(key)) {
+        duplicates++;
+        continue;
+      }
+      seen.add(key);
+      selected.push(match);
+    }
+    const templateTruncated = selected.length > MAX_MATCHES_PER_TEMPLATE;
+    if (templateTruncated) truncated = true;
+    const returned = selected.slice(0, MAX_MATCHES_PER_TEMPLATE);
+    perTemplate.push(returned);
+    stats.push({
+      finding_id: template.finding_id,
+      vulnerability_class: template.vulnerability_class,
+      sink_file: template.sink_file,
+      sink_line: template.sink_line,
+      regex: template.regex,
+      total_hits: allMatches.length,
+      excluded_seed: excludedSeed,
+      duplicate_hits: duplicates,
+      returned_hits: returned.length,
+      truncated: templateTruncated,
+    });
+  }
+
+  // Interleave templates instead of consuming the global budget in template order. With a hard
+  // global cap, strict ordering lets the first few broad templates starve every later one.
+  const matches: ExploreSearchMatch[] = [];
+  const unique = new Set<string>();
+  const cursors = new Array<number>(perTemplate.length).fill(0);
+  const hasUnseenRemaining = (): boolean =>
+    perTemplate.some((list, index) =>
+      list
+        .slice(cursors[index] ?? 0)
+        .some((match) => !unique.has(`${match.finding_id}:${match.match_file}:${match.match_line}`)),
+    );
+  while (true) {
+    let progressed = false;
+    for (let index = 0; index < perTemplate.length; index++) {
+      const list = perTemplate[index];
+      const cursor = cursors[index];
+      if (list === undefined || cursor === undefined || cursor >= list.length) continue;
+      const match = list[cursor] as ExploreSearchMatch;
+      cursors[index] = cursor + 1;
+      progressed = true;
+      const key = `${match.finding_id}:${match.match_file}:${match.match_line}`;
+      if (unique.has(key)) continue;
+      if (matches.length >= MAX_TOTAL_MATCHES) {
+        // This match was consumed from its template but cannot be admitted, so the scan is
+        // truncated regardless of what else remains.
         truncated = true;
         break;
       }
+      unique.add(key);
       matches.push(match);
-      templateCount++;
     }
     if (matches.length >= MAX_TOTAL_MATCHES) {
-      truncated = true;
+      if (hasUnseenRemaining()) truncated = true;
       break;
     }
+    if (!progressed) break;
   }
-  const unique = new Map<string, ExploreSearchMatch>();
-  for (const match of matches) unique.set(`${match.finding_id}:${match.match_file}:${match.match_line}`, match);
-  return { matches: [...unique.values()], rejected, truncated };
+  return { matches, rejected, truncated, templates: stats };
 }

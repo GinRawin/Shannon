@@ -8,6 +8,7 @@ import type { ReconciliationClass } from '../types/reconciliation.js';
 import { ALL_RECONCILIATION_CLASSES } from '../types/reconciliation.js';
 import { type BrowserReplayPlan, type BrowserReplayVerification, hasTrustedBrowserReplay } from './browser-replay.js';
 import { type HttpEvidenceReceipt, readVerifiedHttpEvidence } from './capture-http-request.js';
+import { expansionExploitQueueFilename } from './expansion-queues.js';
 import { readCommittedFile } from './git-manager.js';
 import type { ParsedHttpTrace } from './http-capture.js';
 import type { HttpReplayPlan, HttpReplayVerification } from './http-replay.js';
@@ -88,12 +89,14 @@ async function loadTaskToFindingIds(dir: string): Promise<Map<string, string>> {
     // Expansion IDs are assigned from the final report namespace directly; unlike the original
     // task IDs, they have no renumber map. Admit only IDs present in the committed candidate
     // queue so this identity mapping cannot be inferred from an arbitrary collector entry.
-    const candidates = await committedJson<{ vulnerabilities?: Array<{ ID?: unknown }> }>(
-      dir,
+    for (const queueFile of [
       `explore_candidates_${vulnClass}.json`,
-    );
-    for (const candidate of candidates?.vulnerabilities ?? []) {
-      if (typeof candidate.ID === 'string') result.set(candidate.ID, candidate.ID);
+      expansionExploitQueueFilename(vulnClass),
+    ]) {
+      const candidates = await committedJson<{ vulnerabilities?: Array<{ ID?: unknown }> }>(dir, queueFile);
+      for (const candidate of candidates?.vulnerabilities ?? []) {
+        if (typeof candidate.ID === 'string') result.set(candidate.ID, candidate.ID);
+      }
     }
   }
   return result;

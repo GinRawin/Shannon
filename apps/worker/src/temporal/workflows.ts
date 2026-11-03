@@ -1444,23 +1444,38 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     await preflightActs.runPreflightValidation(activityInput);
     await preflightActs.syncPlaywrightStealthConfig(activityInput);
 
-    state.currentPhase = 'auth-validation';
-    state.currentAgent = 'validate-authentication';
-    const authMetrics = await authValidationActs.runAuthenticationValidation(activityInput);
-    if (authMetrics !== null) state.agentMetrics['validate-authentication'] = authMetrics;
-    state.currentAgent = null;
-
-    await a.initDeliverableGit(activityInput);
-    await a.syncCodePathDenyRules(activityInput);
-
-    const allExpectedDone = state.expectedAgents.every((agentName) => state.completedAgents.includes(agentName));
+    // Credential validation exists only to prepare the pentest phase (pre-recon, recon, the five
+    // class pipelines, and the miscellaneous lane). record, explore, expansion, and report all
+    // consume already-published deliverables, so a resume that has finished every pentest agent
+    // must not re-validate credentials: an interactive challenge (for example a slider CAPTCHA)
+    // can block indefinitely and no remaining stage consumes its result.
+    const pentestAgentsPending = state.expectedAgents.some(
+      (agentName) =>
+        agentName !== 'record' &&
+        agentName !== 'explore' &&
+        agentName !== 'report' &&
+        !state.completedAgents.includes(agentName),
+    );
     // A durable draft means report.json is already committed, so re-running the pentest phase
     // cannot change what the report says. It would only re-pay for the analysis and observe new
     // degradation reasons that the finalized deliverable, rendered from durable state, could never
     // carry — leaving the report claiming complete coverage while the session records a partial
     // run. An invalid draft is rolled back to `pending` during resume, so it still re-runs here.
     const reportAlreadyAuthored = reportIsAuthored(resumeState?.reportProgress?.stage);
-    if (!allExpectedDone && !reportAlreadyAuthored) {
+    const needsPentestPhase = pentestAgentsPending && !reportAlreadyAuthored;
+
+    if (needsPentestPhase) {
+      state.currentPhase = 'auth-validation';
+      state.currentAgent = 'validate-authentication';
+      const authMetrics = await authValidationActs.runAuthenticationValidation(activityInput);
+      if (authMetrics !== null) state.agentMetrics['validate-authentication'] = authMetrics;
+      state.currentAgent = null;
+    }
+
+    await a.initDeliverableGit(activityInput);
+    await a.syncCodePathDenyRules(activityInput);
+
+    if (needsPentestPhase) {
       // Agentic SAST overlaps the pentest: it starts here and is joined per class before
       // reconciliation, so preliminary analysis and reconnaissance never wait on it.
       const settlement = settleCapella();

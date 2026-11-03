@@ -23,6 +23,15 @@ import type { CapturedSubmitTool } from './submit-tool.js';
 
 const ANALYSIS_NOTES_DESCRIPTION = 'Plain context for defenders (caveats, scope, what is at risk). Not attack steps.';
 
+/**
+ * Extra ID rules for an Explore expansion pass. The host supplies the only target IDs that may
+ * enrich an existing finding, plus the producer IDs already owned by the original analysis.
+ */
+export interface QueueIdPolicy {
+  readonly expansionTargetIds?: ReadonlySet<string>;
+  readonly priorProducerIds?: ReadonlySet<string>;
+}
+
 function optStr(description?: string) {
   return Type.Optional(Type.String(description === undefined ? {} : { description }));
 }
@@ -199,16 +208,29 @@ function producerIdFormat(vulnClass: VulnClass): string {
   return `${REF_PREFIX[vulnClass]}-VULN-NN`;
 }
 
-function outOfNamespaceIds(vulnerabilities: readonly unknown[], vulnClass: VulnClass): string[] {
+function validateQueueIds(
+  vulnerabilities: readonly unknown[],
+  vulnClass: VulnClass,
+  idPolicy?: QueueIdPolicy,
+): { reused: string[]; rejected: string[] } {
+  const reused: string[] = [];
   const rejected: string[] = [];
   for (const entry of vulnerabilities) {
     if (entry === null || typeof entry !== 'object') continue;
     const id = (entry as { ID?: unknown }).ID;
-    if (typeof id !== 'string' || !isProducerId(id, vulnClass, 'VULN')) {
-      rejected.push(typeof id === 'string' ? id : String(id));
+    if (typeof id !== 'string') {
+      rejected.push(String(id));
+      continue;
     }
+    if (idPolicy?.priorProducerIds?.has(id) === true) {
+      reused.push(id);
+      continue;
+    }
+    if (isProducerId(id, vulnClass, 'VULN')) continue;
+    if (idPolicy?.expansionTargetIds?.has(id) === true) continue;
+    rejected.push(id);
   }
-  return rejected;
+  return { reused, rejected };
 }
 
 const ID_PREVIEW_LIMIT = 6;
@@ -234,10 +256,22 @@ function retryableRejection(message: string) {
   };
 }
 
-function idNamespaceRejection(vulnClass: VulnClass, rejected: readonly string[]) {
+function idNamespaceRejection(vulnClass: VulnClass, rejected: readonly string[], expansion: boolean) {
+  const message = expansion
+    ? `Every entry ID must be a fresh producer ID formatted ${producerIdFormat(vulnClass)} ` +
+      `(for example ${REF_PREFIX[vulnClass]}-VULN-41), or one of the host-assigned ` +
+      `${REF_PREFIX[vulnClass]}-VULN-EXP-NN target IDs supplied in the template_expansion_pass. ` +
+      `Outside that namespace: ${previewIds(rejected)}.`
+    : `Every entry ID must be ${producerIdFormat(vulnClass)} ` +
+      `(for example ${REF_PREFIX[vulnClass]}-VULN-01). Outside that namespace: ${previewIds(rejected)}.`;
+  return retryableRejection(message);
+}
+
+function reusedIdRejection(vulnClass: VulnClass, reused: readonly string[]) {
   const message =
-    `Every entry ID must be ${producerIdFormat(vulnClass)} ` +
-    `(for example ${REF_PREFIX[vulnClass]}-VULN-01). Outside that namespace: ${previewIds(rejected)}.`;
+    `Do not reuse a prior producer ID during template expansion: ${previewIds(reused)}. ` +
+    `Use the matching ${REF_PREFIX[vulnClass]}-VULN-EXP-NN target ID to enrich the existing finding, ` +
+    `or assign a fresh ${producerIdFormat(vulnClass)} ID to a genuinely new candidate.`;
   return retryableRejection(message);
 }
 
@@ -272,14 +306,17 @@ function duplicateIdRejection(vulnClass: VulnClass, repeated: readonly string[])
  * the identifier a downstream exploit agent should ever see; reconciliation is responsible for
  * translating it into the exploitation-task identity the published queue carries instead.
  */
-function queueSchema(agentName: AgentName, exploit: boolean): TObject | undefined {
+function queueSchema(agentName: AgentName, exploit: boolean, expansion: boolean): TObject | undefined {
   const extra = PER_TYPE_FIELDS[agentName];
   const vulnClass = VULN_AGENT_CLASSES[agentName];
   if (!extra || !vulnClass) return undefined;
   const idField = Type.String({
-    description:
-      `Producer identifier formatted ${producerIdFormat(vulnClass)} ` +
-      `(for example ${REF_PREFIX[vulnClass]}-VULN-01).`,
+    description: expansion
+      ? `A fresh producer identifier formatted ${producerIdFormat(vulnClass)} ` +
+        `(for example ${REF_PREFIX[vulnClass]}-VULN-41) for a new finding, or a host-assigned ` +
+        `${REF_PREFIX[vulnClass]}-VULN-EXP-NN target ID for enriching an existing finding.`
+      : `Producer identifier formatted ${producerIdFormat(vulnClass)} ` +
+        `(for example ${REF_PREFIX[vulnClass]}-VULN-01).`,
   });
   return Type.Object({
     vulnerabilities: Type.Array(Type.Object({ ...baseFields(exploit), ID: idField, ...extra })),
@@ -292,8 +329,13 @@ export function getQueueFilename(agentName: AgentName): string | undefined {
 }
 
 /** Build the pi submit tool that captures the exploitation queue for vuln agents. */
-export function createQueueSubmitTool(agentName: AgentName, exploit = true): CapturedSubmitTool | undefined {
-  const schema = queueSchema(agentName, exploit);
+export function createQueueSubmitTool(
+  agentName: AgentName,
+  exploit = true,
+  idPolicy?: QueueIdPolicy,
+): CapturedSubmitTool | undefined {
+  const expansion = idPolicy?.expansionTargetIds !== undefined || idPolicy?.priorProducerIds !== undefined;
+  const schema = queueSchema(agentName, exploit, expansion);
   const vulnClass = VULN_AGENT_CLASSES[agentName];
   if (!schema || !vulnClass) return undefined;
 
@@ -308,7 +350,10 @@ export function createQueueSubmitTool(agentName: AgentName, exploit = true): Cap
       promptGuidelines: [
         'You MUST call submit_exploitation_queue exactly once as your final action.',
         'Include every analyzed finding in the vulnerabilities array.',
-        `Give every entry an ID in the ${producerIdFormat(vulnClass)} namespace.`,
+        expansion
+          ? `Use a host-assigned ${REF_PREFIX[vulnClass]}-VULN-EXP-NN ID only to enrich its existing finding; ` +
+            `use a fresh ${producerIdFormat(vulnClass)} ID for every new finding, and never reuse a prior producer ID.`
+          : `Give every entry an ID in the ${producerIdFormat(vulnClass)} namespace.`,
       ],
       parameters: schema,
       async execute(_toolCallId, params) {
@@ -320,9 +365,12 @@ export function createQueueSubmitTool(agentName: AgentName, exploit = true): Cap
         // rules are the ones reconciliation applies to the committed queue; enforcing them here
         // turns a permanent post-commit failure into an in-session correction. Nothing is captured,
         // written, or committed until every ID passes.
-        const rejected = outOfNamespaceIds(vulnerabilities, vulnClass);
-        if (rejected.length > 0) {
-          return idNamespaceRejection(vulnClass, rejected);
+        const idValidation = validateQueueIds(vulnerabilities, vulnClass, idPolicy);
+        if (idValidation.reused.length > 0) {
+          return reusedIdRejection(vulnClass, idValidation.reused);
+        }
+        if (idValidation.rejected.length > 0) {
+          return idNamespaceRejection(vulnClass, idValidation.rejected, expansion);
         }
         const repeated = repeatedProducerIds(vulnerabilities);
         if (repeated.length > 0) {

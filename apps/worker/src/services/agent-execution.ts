@@ -23,7 +23,7 @@
 
 import { fs, path } from 'zx';
 import { type PiPromptResult, runPiPrompt, validateAgentOutput } from '../ai/pi/pi-executor.js';
-import { createQueueSubmitTool, getQueueFilename } from '../ai/queue-schemas.js';
+import { createQueueSubmitTool, getQueueFilename, type QueueIdPolicy } from '../ai/queue-schemas.js';
 import type { AuditSession } from '../audit/index.js';
 import { safeErrorFromCode } from '../audit/safe-fields.js';
 import { authStateFile } from '../audit/utils.js';
@@ -73,12 +73,17 @@ export interface AgentExecutionInput {
   promptAddendum?: string | undefined;
   auditAgentName?: import('../audit/safe-fields.js').LoggableAgentName;
   additionalGitPaths?: readonly string[];
+  /** Replaces the agent's default structured queue filename for this execution only. */
+  queueFilenameOverride?: string | undefined;
+  /** Extra ID rules for an Explore expansion pass; absent for normal agent runs. */
+  queueIdPolicy?: QueueIdPolicy | undefined;
   cancellationSignal?: AbortSignal | undefined;
 }
 
 interface FailAgentOpts {
   auditAgentName?: import('../audit/safe-fields.js').LoggableAgentName;
   gitPaths?: readonly string[];
+  queueFilenameOverride?: string | undefined;
   attemptNumber: number;
   result: PiPromptResult;
   rollbackReason: string;
@@ -177,9 +182,11 @@ export class AgentExecutionService {
       writeDeliverable,
       successDisposition = 'terminal',
       promptAddendum,
+      queueFilenameOverride,
       cancellationSignal,
     } = input;
-    const gitPaths = [...getAgentGitPaths(agentName), ...(input.additionalGitPaths ?? [])];
+    const effectiveQueueFilename = queueFilenameOverride ?? getQueueFilename(agentName);
+    const gitPaths = [...getAgentGitPaths(agentName, queueFilenameOverride), ...(input.additionalGitPaths ?? [])];
     const auditAgentName = input.auditAgentName ?? agentName;
 
     // The parameter type only constrains element type, not that this is exactly the fixed five
@@ -268,7 +275,11 @@ export class AgentExecutionService {
     try {
       // 5. Execute agent. Vuln agents get a submit tool that captures the structured
       //    exploitation queue (pi has no JSON-schema output format).
-      const submitTool = createQueueSubmitTool(agentName, distributedConfig?.exploit ?? true);
+      const submitTool = createQueueSubmitTool(
+        agentName,
+        distributedConfig?.exploit ?? true,
+        input.queueIdPolicy,
+      );
       const result: PiPromptResult = await runPiPrompt(
         prompt,
         repoPath,
@@ -309,16 +320,21 @@ export class AgentExecutionService {
         // returned path rolls the workspace back and records the failed attempt.
         try {
           // 8. Write structured output to disk (vuln agents only) from the executor's capture
-          const queueFilename = getQueueFilename(agentName);
-          if (submitTool && queueFilename && result.structuredOutput !== undefined) {
+          if (submitTool && effectiveQueueFilename && result.structuredOutput !== undefined) {
             await fs.ensureDir(deliverablesPath);
-            const queuePath = path.join(deliverablesPath, queueFilename);
+            const queuePath = path.join(deliverablesPath, effectiveQueueFilename);
             await fs.writeFile(queuePath, JSON.stringify(result.structuredOutput, null, 2), 'utf8');
-            logger.info(`Wrote structured output queue to ${queueFilename}`);
+            logger.info(`Wrote structured output queue to ${effectiveQueueFilename}`);
           }
 
           // 9. Validate output
-          const validationPassed = await validateAgentOutput(result, agentName, deliverablesPath, logger);
+          const validationPassed = await validateAgentOutput(
+            result,
+            agentName,
+            deliverablesPath,
+            logger,
+            queueFilenameOverride,
+          );
           if (!validationPassed) {
             return new PentestError(
               `Agent ${agentName} failed output validation`,
@@ -424,7 +440,7 @@ export class AgentExecutionService {
       deliverablesPath,
       opts.rollbackReason,
       logger,
-      opts.gitPaths ?? getAgentGitPaths(agentName),
+      opts.gitPaths ?? getAgentGitPaths(agentName, opts.queueFilenameOverride),
     );
 
     const safeError = safeErrorFromCode(opts.errorCode, opts.category);

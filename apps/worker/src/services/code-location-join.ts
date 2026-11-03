@@ -14,6 +14,7 @@ import { ALL_VULN_CLASSES } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
 import type { ReconciliationClass } from '../types/reconciliation.js';
 import { PentestError } from './error-handling.js';
+import { expansionExploitQueueFilename } from './expansion-queues.js';
 import { readCommittedFile } from './git-manager.js';
 import { renumberMapPath } from './renumber-core.js';
 
@@ -152,6 +153,7 @@ async function loadQueueLocations(
     const queues = [
       { path: `${vulnerabilityClass}_exploitation_queue.json`, applyReferenceMap: true },
       { path: `explore_candidates_${vulnerabilityClass}.json`, applyReferenceMap: false },
+      { path: expansionExploitQueueFilename(vulnerabilityClass), applyReferenceMap: false },
     ];
     for (const queue of queues) {
       const queueRead = await readCommittedFile(deliverablesPath, queue.path);

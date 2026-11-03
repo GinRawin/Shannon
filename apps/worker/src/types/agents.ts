@@ -42,7 +42,11 @@ export type PlaywrightSession = 'agent1' | 'agent2' | 'agent3' | 'agent4' | 'age
 import type { ActivityLogger } from './activity-logger.js';
 import type { VulnClass } from './config.js';
 
-export type AgentValidator = (sourceDir: string, logger: ActivityLogger) => Promise<boolean>;
+export type AgentValidator = (
+  sourceDir: string,
+  logger: ActivityLogger,
+  queueFilenameOverride?: string,
+) => Promise<boolean>;
 
 export type AgentStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'rolled-back';
 

@@ -48,3 +48,19 @@ export function taskReferencePattern(vulnClass: ReconciliationClass): RegExp {
 export function isTaskReference(id: string, vulnClass: ReconciliationClass): boolean {
   return taskReferencePattern(vulnClass).test(id);
 }
+
+/**
+ * Host-assigned IDs for enriching an existing finding during an Explore expansion pass.
+ *
+ * These IDs are deliberately in a separate namespace from producer IDs: a target ID means
+ * "assess these deterministic search hits against this already-confirmed finding" and must
+ * never be admitted as a new producer identity.
+ */
+export function expansionTargetIdPattern(vulnClass: ReconciliationClass): RegExp {
+  return new RegExp(`^${REF_PREFIX[vulnClass]}-VULN-EXP-${positiveReferenceNumberPattern()}$`);
+}
+
+/** Whether an ID is a host-assigned Explore expansion target in the declared class namespace. */
+export function isExpansionTargetId(id: string, vulnClass: ReconciliationClass): boolean {
+  return expansionTargetIdPattern(vulnClass).test(id);
+}

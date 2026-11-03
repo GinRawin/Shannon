@@ -5,6 +5,7 @@ import type { RecordVerdict } from '../collectors/record-collector.js';
 import { atomicWrite } from '../utils/file-io.js';
 import { type BrowserReplayPlan, hasTrustedBrowserReplay } from './browser-replay.js';
 import { renderExploitDeliverable } from './exploit-renderer.js';
+import { expansionExploitQueueFilename } from './expansion-queues.js';
 import { loadPacketBackedFindingIds } from './http-evidence.js';
 import type { HttpReplayPlan } from './http-replay.js';
 
@@ -294,6 +295,10 @@ export async function applyExploitReviews(
     );
     await removeIdsFromQueue(
       path.join(deliverablesDir, `explore_candidates_${vulnerabilityClass}.json`),
+      falsePositiveIds,
+    );
+    await removeIdsFromQueue(
+      path.join(deliverablesDir, expansionExploitQueueFilename(vulnerabilityClass)),
       falsePositiveIds,
     );
   }

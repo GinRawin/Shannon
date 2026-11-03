@@ -6,6 +6,7 @@
 
 import { fs, path } from 'zx';
 
+import { isExpansionVulnQueueFilename } from './services/expansion-queues.js';
 import type { ActivityLogger } from './types/activity-logger.js';
 import type { AgentDefinition, AgentName, AgentValidator, PlaywrightSession, VulnType } from './types/index.js';
 import type { ReconciliationClass } from './types/reconciliation.js';
@@ -182,11 +183,19 @@ export const AGENT_PHASE_MAP: Readonly<Record<AgentName, PhaseName>> = Object.fr
 // validator only checks queue.json, written by the submit-tool path in
 // agent-execution.ts before this validator runs.
 function createVulnValidator(vulnType: VulnType): AgentValidator {
-  return async (sourceDir: string, logger: ActivityLogger): Promise<boolean> => {
-    const queueFile = path.join(sourceDir, `${vulnType}_exploitation_queue.json`);
+  return async (sourceDir: string, logger: ActivityLogger, queueFilenameOverride?: string): Promise<boolean> => {
+    const queueFilename = queueFilenameOverride ?? `${vulnType}_exploitation_queue.json`;
+    const queueFile = path.join(sourceDir, queueFilename);
     const queueExists = await fs.pathExists(queueFile);
     if (!queueExists) {
-      logger.warn(`Queue validation failed for ${vulnType}: ${vulnType}_exploitation_queue.json missing`);
+      // Expansion passes may legitimately produce no submission. Their host-side deliverable
+      // writer materializes an explicit empty queue plus a submission audit after this check,
+      // so a missing file here means "nothing submitted", not "agent failed".
+      if (isExpansionVulnQueueFilename(queueFilenameOverride)) {
+        logger.info(`Expansion queue ${queueFilename} missing; treating as an empty submission`);
+        return true;
+      }
+      logger.warn(`Queue validation failed for ${vulnType}: ${queueFilename} missing`);
       return false;
     }
     return true;

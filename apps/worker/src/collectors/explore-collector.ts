@@ -15,10 +15,17 @@ export interface ExploreTemplate {
   rationale: string;
 }
 
+export interface ExploreSkip {
+  finding_id: string;
+  reason: string;
+}
+
 export function createExploreCollector(args: {
   sinks: ReadonlyMap<string, { vulnerabilityClass: string; locations: ReadonlyMap<string, ReadonlySet<number>> }>;
-}): { tools: ToolDefinition[]; getAll(): ExploreTemplate[] } {
+  verifiedFindingIds: ReadonlySet<string>;
+}): { tools: ToolDefinition[]; getAll(): ExploreTemplate[]; getSkips(): ExploreSkip[] } {
   const templates = new Map<string, ExploreTemplate>();
+  const skips = new Map<string, ExploreSkip>();
   const tool = defineTool({
     name: 'submit_explore_template',
     label: 'Submit Sink Search Template',
@@ -40,11 +47,37 @@ export function createExploreCollector(args: {
         return result({ status: 'error', message: 'Sink file is not one of the recorded code locations for this finding.' });
       if (templates.size >= 200)
         return result({ status: 'error', message: 'Template limit reached for this scan.' });
+      if (skips.has(input.finding_id))
+        return result({
+          status: 'error',
+          message: 'This finding was already skipped. Do not both skip a finding and submit a template for it.',
+        });
       const key = `${input.finding_id}:${input.sink_file}:${input.sink_line}:${input.regex}`;
       if (templates.has(key)) return result({ status: 'error', message: 'This template was already submitted.' });
       templates.set(key, { ...input });
       return result({ status: 'success', accepted: true });
     },
   });
-  return { tools: [tool], getAll: () => [...templates.values()] };
+  const skipTool = defineTool({
+    name: 'skip_explore_finding',
+    label: 'Skip Explore Finding',
+    description:
+      'Record why a record-verified finding has no usable source template. Every trusted sink must either receive a template or an explicit skip; silent omission is treated as a coverage gap.',
+    parameters: Type.Object({
+      finding_id: Type.String({ minLength: 1 }),
+      reason: Type.String({ minLength: 1, maxLength: 500 }),
+    }),
+    async execute(_id, input) {
+      if (!args.verifiedFindingIds.has(input.finding_id))
+        return result({ status: 'error', message: 'Finding is not record-verified; it cannot be skipped here.' });
+      if ([...templates.values()].some((template) => template.finding_id === input.finding_id))
+        return result({
+          status: 'error',
+          message: 'This finding already has a submitted template. Do not skip it as well.',
+        });
+      skips.set(input.finding_id, { finding_id: input.finding_id, reason: input.reason });
+      return result({ status: 'success', recorded: true });
+    },
+  });
+  return { tools: [tool, skipTool], getAll: () => [...templates.values()], getSkips: () => [...skips.values()] };
 }

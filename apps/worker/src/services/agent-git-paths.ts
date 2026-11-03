@@ -16,7 +16,14 @@
 import { getQueueFilename } from '../ai/queue-schemas.js';
 import { REPORT_JSON_FILENAME } from '../paths.js';
 import { AGENTS } from '../session-manager.js';
+import {
+  expansionAnalysisFilename,
+  expansionExploitQueueFilename,
+  expansionSubmissionAuditFilename,
+  expansionVulnQueueFilename,
+} from './expansion-queues.js';
 import type { AgentName } from '../types/agents.js';
+import type { ReconciliationClass } from '../types/reconciliation.js';
 
 // These names must match `sparseExploitCollectorPath` in renumber-core.ts, which derives the
 // same filename from the bare ReconciliationClass at read time. If the two fall out of sync,
@@ -36,9 +43,9 @@ const EXPLOIT_COLLECTOR_PATHS: Readonly<Partial<Record<AgentName, string>>> = Ob
  * Deliverable files an agent writes into the deliverables directory. Used to
  * scope git operations so one agent never touches a sibling agent's output.
  */
-export function getAgentGitPaths(agentName: AgentName): string[] {
+export function getAgentGitPaths(agentName: AgentName, queueFilenameOverride?: string): string[] {
   const paths = [AGENTS[agentName].deliverableFilename];
-  const queueFilename = getQueueFilename(agentName);
+  const queueFilename = queueFilenameOverride ?? getQueueFilename(agentName);
   if (queueFilename) {
     paths.push(queueFilename);
   }
@@ -63,7 +70,15 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
       'http-replay-verifications',
       'browser-replay-verifications',
     );
-    for (const vulnerabilityClass of ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous']) {
+    const recordClasses: ReconciliationClass[] = [
+      'injection',
+      'xss',
+      'auth',
+      'ssrf',
+      'authz',
+      'miscellaneous',
+    ];
+    for (const vulnerabilityClass of recordClasses) {
       paths.push(
         `exploit_review_${vulnerabilityClass}.json`,
         `${vulnerabilityClass}_recorded_exploitation_evidence.md`,
@@ -76,6 +91,10 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
       paths.push(
         `explore_candidates_${vulnerabilityClass}.json`,
         `explore_expansion_${vulnerabilityClass}.md`,
+        expansionAnalysisFilename(vulnerabilityClass),
+        expansionVulnQueueFilename(vulnerabilityClass),
+        expansionExploitQueueFilename(vulnerabilityClass),
+        expansionSubmissionAuditFilename(vulnerabilityClass),
         `explore_expansion_${vulnerabilityClass}_exploit_collector.json`,
         `explore_expansion_${vulnerabilityClass}_exploitation_evidence.md`,
         `explore_expansion_${vulnerabilityClass}_recorded_exploitation_evidence.md`,
@@ -83,7 +102,7 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
     }
   }
   if (agentName === 'explore') {
-    paths.push('explore_templates.json', 'explore_search_results.json');
+    paths.push('explore_templates.json', 'explore_search_results.json', 'explore_template_coverage.json');
   }
   const vulnExpansionArtifacts: Readonly<Partial<Record<AgentName, string>>> = {
     'injection-vuln': 'explore_expansion_injection.json',
@@ -95,8 +114,15 @@ export function getAgentGitPaths(agentName: AgentName): string[] {
   const expansionArtifact = vulnExpansionArtifacts[agentName];
   if (expansionArtifact) {
     paths.push(expansionArtifact);
-    const vulnerabilityClass = agentName.replace(/-vuln$/, '');
-    paths.push(`explore_expansion_${vulnerabilityClass}.md`, `explore_candidates_${vulnerabilityClass}.json`);
+    const vulnerabilityClass = agentName.replace(/-vuln$/, '') as ReconciliationClass;
+    paths.push(
+      `explore_expansion_${vulnerabilityClass}.md`,
+      `explore_candidates_${vulnerabilityClass}.json`,
+      expansionAnalysisFilename(vulnerabilityClass),
+      expansionVulnQueueFilename(vulnerabilityClass),
+      expansionExploitQueueFilename(vulnerabilityClass),
+      expansionSubmissionAuditFilename(vulnerabilityClass),
+    );
   }
   const exploitExpansionClass: Readonly<Partial<Record<AgentName, string>>> = {
     'injection-exploit': 'injection',

@@ -195,6 +195,7 @@ export async function validateAgentOutput(
   agentName: string | null,
   sourceDir: string,
   logger: ActivityLogger,
+  queueFilenameOverride?: string,
 ): Promise<boolean> {
   logger.info(`Validating ${agentName} agent output`);
   try {
@@ -211,7 +212,7 @@ export async function validateAgentOutput(
       return true;
     }
     logger.info(`Using validator for agent: ${agentName}`, { sourceDir });
-    const validationResult = await validator(sourceDir, logger);
+    const validationResult = await validator(sourceDir, logger, queueFilenameOverride);
     if (validationResult) {
       logger.info('Validation passed: Required files/structure present');
     } else {
