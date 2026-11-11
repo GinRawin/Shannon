@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const STATE_SCHEMA_VERSION = 1;
 const DEFAULT_SHANNON = fileURLToPath(new URL('../shannon', import.meta.url));
-const MODELS_CONFIG = '/home/hjr/shannon/models.volcengine.json';
+const MODELS_CONFIG = process.env.SHANNON_MODELS_CONFIG ?? fileURLToPath(new URL('../models.volcengine.json', import.meta.url));
 const FINAL_STATUSES = new Set(['completed', 'failed']);
 
 function usage() {
@@ -23,6 +23,8 @@ Accepted queue formats:
 Options:
   --state <path>         State file (default: <queue>.shannon-batch-state.json)
   --shannon <path>       Shannon executable (default: repository ./shannon)
+
+  SHANNON_MODELS_CONFIG  Override the models config (default: repository models.volcengine.json)
   --stop-on-error        Stop after the first failed scan (default: continue)
   --retry-failed         Retry records already marked failed once in this run
   --watch                Wait for newly written records after the queue is drained

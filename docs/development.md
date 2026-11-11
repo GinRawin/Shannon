@@ -165,8 +165,8 @@ Run the queue and place any options shared by every `shannon start` invocation a
 ```
 
 Every scan automatically receives `-c <code_location>/config.yaml` and
-`--models-config /home/hjr/shannon/models.volcengine.json`. The project `config.yaml` must exist by
-the time its record is selected.
+`--models-config <repository>/models.volcengine.json` (override with the `SHANNON_MODELS_CONFIG`
+environment variable). The project `config.yaml` must exist by the time its record is selected.
 
 JSON arrays are also accepted, including trailing commas before `}` or `]`. Records are claimed in
 file order. The queue itself is never modified; progress is stored in
