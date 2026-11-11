@@ -260,7 +260,7 @@ function idNamespaceRejection(vulnClass: VulnClass, rejected: readonly string[],
   const message = expansion
     ? `Every entry ID must be a fresh producer ID formatted ${producerIdFormat(vulnClass)} ` +
       `(for example ${REF_PREFIX[vulnClass]}-VULN-41), or one of the host-assigned ` +
-      `${REF_PREFIX[vulnClass]}-VULN-EXP-NN target IDs supplied in the template_expansion_pass. ` +
+      `${REF_PREFIX[vulnClass]}-VULN-EXP-NN target IDs supplied in the clone_expansion_pass. ` +
       `Outside that namespace: ${previewIds(rejected)}.`
     : `Every entry ID must be ${producerIdFormat(vulnClass)} ` +
       `(for example ${REF_PREFIX[vulnClass]}-VULN-01). Outside that namespace: ${previewIds(rejected)}.`;

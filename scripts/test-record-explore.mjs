@@ -21,7 +21,6 @@ import {
 import {
   candidateMatchesExploreSearch,
   locationMatchesExploreSearch,
-  searchExploreTemplates,
 } from '../apps/worker/dist/services/explore-search.js';
 import {
   expansionExploitTaskId,
@@ -237,50 +236,6 @@ try {
     'Exploit must reject code location paths that do not resolve to source files',
   );
   console.log('PASS Exploit validates code location paths during evidence submission');
-
-  const result = await searchExploreTemplates(dir, [{
-    finding_id: 'F-1', vulnerability_class: 'xss', sink_file: 'seed.js', sink_line: 11,
-    regex: 'danger\\(\\)', rationale: 'test',
-  }]);
-  assert.equal(result.rejected.length, 0, 'seed after eighth match must be accepted');
-  assert.equal(result.truncated, true, 'bounded results must disclose truncation');
-  assert.equal(result.matches.length, 40);
-  assert.deepEqual(result.templates, [{
-    finding_id: 'F-1',
-    vulnerability_class: 'xss',
-    sink_file: 'seed.js',
-    sink_line: 11,
-    regex: 'danger\\(\\)',
-    total_hits: 61,
-    excluded_seed: 1,
-    duplicate_hits: 0,
-    returned_hits: 40,
-    truncated: true,
-  }], 'per-template accounting must explain where hits went');
-
-  await writeFile(path.join(dir, 'broad.js'), 'broad()\n'.repeat(41));
-  await writeFile(path.join(dir, 'narrow.js'), 'narrow()\n'.repeat(3));
-  const interleaved = await searchExploreTemplates(dir, [
-    {
-      finding_id: 'BROAD-1', vulnerability_class: 'injection', sink_file: 'broad.js', sink_line: 41,
-      regex: 'broad\\(\\)', rationale: 'test',
-    },
-    {
-      finding_id: 'NARROW-1', vulnerability_class: 'injection', sink_file: 'narrow.js', sink_line: 3,
-      regex: 'narrow\\(\\)', rationale: 'test',
-    },
-  ]);
-  assert.equal(interleaved.truncated, false);
-  assert.deepEqual(
-    interleaved.matches.slice(0, 4).map((match) => match.finding_id),
-    ['BROAD-1', 'NARROW-1', 'BROAD-1', 'NARROW-1'],
-    'templates must be interleaved so an early broad template cannot starve a later narrow one',
-  );
-  assert.ok(
-    interleaved.matches.some((match) => match.finding_id === 'NARROW-1' && match.match_line === 1),
-    'the narrow template must contribute its own discoveries',
-  );
-  console.log('PASS Explore search reports per-template accounting and interleaves broad and narrow templates');
 
   const fp = { status: 'exploited', vulnerability_id: 'INJ-02', title: 'False positive fixture' };
   const retained = { status: 'exploited', vulnerability_id: 'INJ-03', title: 'Retained fixture' };

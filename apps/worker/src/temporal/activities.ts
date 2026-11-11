@@ -54,6 +54,7 @@ import {
   nextExpansionExploitTaskNumber,
 } from '../services/expansion-queues.js';
 import { ExploitationCheckerService } from '../services/exploitation-checker.js';
+import type { CloneSearchOutcome, CloneSearchSeed } from '../services/explore-clone-search.js';
 import { locationMatchesExploreSearch } from '../services/explore-search.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
 import { executeGitCommandWithRetry } from '../services/git-manager.js';
@@ -599,13 +600,21 @@ export async function runReconAgent(input: ActivityInput): Promise<AgentMetrics>
   return runAgentActivity('recon', input, collector.tools, writeDeliverable);
 }
 
+/**
+ * One deterministic Explore clone hit. Older workspaces wrote the same shape with a `regex` field
+ * instead of the clone metadata, so only the location fields are required here.
+ */
 interface ExpansionMatch {
   finding_id: string;
   vulnerability_class: string;
   match_file: string;
   match_line: number;
   excerpt: string;
-  regex: string;
+  seed_file?: string;
+  seed_line?: number;
+  candidate_start_line?: number;
+  candidate_end_line?: number;
+  score?: number;
 }
 
 /** A record-verified finding with deterministic search hits, exposed to the expansion pass by a fresh ID. */
@@ -628,7 +637,7 @@ type ExpansionRejectionReason =
   | 'no_code_locations'
   | 'no_sink_location'
   | 'invalid_location_range'
-  | 'no_template_match';
+  | 'no_clone_match';
 
 const EXPANSION_ID_PREFIX: Readonly<Record<'injection' | 'xss' | 'auth' | 'ssrf' | 'authz', string>> = {
   injection: 'INJ',
@@ -658,8 +667,8 @@ function hasValidLocationRange(location: CandidateCodeLocation): boolean {
 }
 
 /**
- * Explain why a submitted entry does not cover a deterministic search hit. Returning undefined
- * means the entry names at least one location that exactly covers a supplied match.
+ * Explain why a submitted entry does not cover a deterministic clone hit. Returning undefined
+ * means the entry names at least one location that exactly covers a supplied clone match line.
  */
 function locationCoverageRejection(
   entry: Record<string, unknown>,
@@ -683,8 +692,8 @@ function locationCoverageRejection(
     if (locationMatchesExploreSearch(location, matches)) return undefined;
     sawValidNonMatching = true;
   }
-  if (sawValidNonMatching) return 'no_template_match';
-  return sawInvalid ? 'invalid_location_range' : 'no_template_match';
+  if (sawValidNonMatching) return 'no_clone_match';
+  return sawInvalid ? 'invalid_location_range' : 'no_clone_match';
 }
 
 async function runVulnAgentWithCollector(
@@ -733,7 +742,11 @@ async function runVulnAgentWithCollector(
         match_file: string;
         match_line: number;
         excerpt: string;
-        regex: string;
+        seed_file?: string;
+        seed_line?: number;
+        candidate_start_line?: number;
+        candidate_end_line?: number;
+        score?: number;
       }>;
     };
     const classMatches: ExpansionMatch[] = (results.matches ?? []).filter(
@@ -862,7 +875,7 @@ async function runVulnAgentWithCollector(
         no_code_locations: 0,
         no_sink_location: 0,
         invalid_location_range: 0,
-        no_template_match: 0,
+        no_clone_match: 0,
       };
       const auditEntries: Array<{
         index: number;
@@ -1059,7 +1072,7 @@ async function runVulnAgentWithCollector(
               (entry) => entry.classification === 'independent_candidate' && !entry.accepted,
             ),
             notes: [
-              'A deterministic template hit is an admission filter, not evidence that the location is exploitable.',
+              'A deterministic clone hit is an admission filter, not evidence that the location is exploitable.',
               'Prior producer IDs are rejected in-session by the submit tool before capture; they are listed here as the set that must not be reused.',
               'Target IDs exist only to enrich an existing record-verified finding. New candidates must use a fresh producer ID.',
             ],
@@ -1151,7 +1164,7 @@ async function runVulnAgentWithCollector(
       },
       null,
       2,
-    )}\n</template_expansion_pass>`;
+    )}\n</clone_expansion_pass>`;
   }
   const auditAgentName = input.exploreExpansion ? (`${vulnClass}-vuln-expansion` as PostExploitationStage) : undefined;
   return runAgentActivity(
@@ -1908,12 +1921,19 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
   );
 }
 
-/** Extract sink templates with an agent, then search the assessed source tree with deterministic ripgrep. */
+/**
+ * Deterministic Type-2/Type-3 clone retrieval over the assessed source tree.
+ *
+ * No model call is made: record-verified sink locations are cut into local normalized-token
+ * windows and matched against an inverted n-gram index of the repository. Matches are code
+ * similarity candidates only; the class expansion pass decides whether any of them is vulnerable.
+ * Resume safety comes from the surrounding durable post-exploitation marker, not from this body.
+ */
 export async function runExploreAgent(input: ActivityInput): Promise<AgentMetrics> {
-  const { createExploreCollector } = await import('../collectors/explore-collector.js');
-  const { searchExploreTemplates } = await import('../services/explore-search.js');
-  const classes: ReconciliationClass[] = ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous'];
+  const { searchCloneCandidates } = await import('../services/explore-clone-search.js');
+  const logger = createActivityLogger();
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+  const startedAt = Date.now();
   const verifiedIdsRaw = JSON.parse(
     await fs.readFile(path.join(dir, 'record_verified_finding_ids.json'), 'utf8'),
   ) as unknown;
@@ -1923,7 +1943,8 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
       'RecordVerificationError',
     );
   const verifiedIds = new Set(verifiedIdsRaw as string[]);
-  const sinks = new Map<string, { vulnerabilityClass: string; locations: Map<string, Set<number>> }>();
+  const classes: ReconciliationClass[] = ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous'];
+  const seedsByKey = new Map<string, CloneSearchSeed>();
   const missingCollectors: string[] = [];
   for (const vulnerabilityClass of classes) {
     const collectorPath = path.join(dir, `${vulnerabilityClass}_exploit_collector_renumbered.json`);
@@ -1947,145 +1968,133 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
         !verifiedIds.has(entry.vulnerability_id)
       )
         continue;
-      const locations = new Map<string, Set<number>>();
       for (const location of Array.isArray(entry.code_locations) ? entry.code_locations : []) {
         if (!location || typeof location !== 'object') continue;
         const row = location as { workspace_relative_file_path?: unknown; line_number?: unknown };
-        if (typeof row.workspace_relative_file_path !== 'string' || typeof row.line_number !== 'number') continue;
-        const lineSet = locations.get(row.workspace_relative_file_path) ?? new Set<number>();
-        lineSet.add(row.line_number);
-        locations.set(row.workspace_relative_file_path, lineSet);
+        if (typeof row.workspace_relative_file_path !== 'string') continue;
+        if (!Number.isInteger(row.line_number) || (row.line_number as number) < 1) continue;
+        const line = row.line_number as number;
+        const key = [entry.vulnerability_id, row.workspace_relative_file_path, String(line)].join('\u0000');
+        if (seedsByKey.has(key)) continue;
+        seedsByKey.set(key, {
+          findingId: entry.vulnerability_id,
+          vulnerabilityClass,
+          file: row.workspace_relative_file_path,
+          line,
+        });
       }
-      if (locations.size) sinks.set(entry.vulnerability_id, { vulnerabilityClass, locations });
     }
   }
-  if (verifiedIds.size > 0 && missingCollectors.length > 0) {
+  if (verifiedIds.size > 0 && missingCollectors.length > 0)
     throw ApplicationFailure.nonRetryable(
       `Explore cannot establish trusted sinks: missing renumbered exploit collectors for ${missingCollectors.join(', ')}.`,
       'ExploreInputError',
     );
-  }
-  const collector = createExploreCollector({ sinks, verifiedFindingIds: verifiedIds });
-  const writeDeliverable = async (deliverablesPath: string): Promise<void> => {
-    const templates = collector.getAll();
-    const skips = collector.getSkips();
-    const search = await searchExploreTemplates(input.repoPath, templates);
-    const classForFinding = (findingId: string): string => {
-      const prefix = /^([A-Z]+)-/.exec(findingId)?.[1];
-      return (
-        (Object.entries(EXPANSION_ID_PREFIX) as Array<[ReconciliationClass, string]>).find(
-          ([, value]) => value === prefix,
-        )?.[0] ?? 'unknown'
-      );
-    };
-    const templateCounts = new Map<string, number>();
-    for (const template of templates)
-      templateCounts.set(template.finding_id, (templateCounts.get(template.finding_id) ?? 0) + 1);
-    const skipById = new Map(skips.map((skip) => [skip.finding_id, skip]));
-    const coverageFindings = [...verifiedIds].sort().map((findingId) => {
-      const vulnerabilityClass = sinks.get(findingId)?.vulnerabilityClass ?? classForFinding(findingId);
-      const templateCount = templateCounts.get(findingId) ?? 0;
-      if (templateCount > 0)
-        return {
-          finding_id: findingId,
-          vulnerability_class: vulnerabilityClass,
-          status: 'templated' as const,
-          template_count: templateCount,
-        };
-      const skip = skipById.get(findingId);
-      if (skip !== undefined)
-        return {
-          finding_id: findingId,
-          vulnerability_class: vulnerabilityClass,
-          status: 'explicitly_skipped' as const,
-          template_count: 0,
-          reason: skip.reason,
-        };
-      if (!sinks.has(findingId))
-        return {
-          finding_id: findingId,
-          vulnerability_class: vulnerabilityClass,
-          status: 'no_trusted_sink' as const,
-          template_count: 0,
-        };
-      return {
-        finding_id: findingId,
-        vulnerability_class: vulnerabilityClass,
-        status: 'unaccounted' as const,
-        template_count: 0,
-        trusted_sink_file_count: sinks.get(findingId)?.locations.size ?? 0,
-      };
-    });
-    const coverageStatuses = coverageFindings.map((finding) => finding.status);
-    const coverage = {
-      summary: {
-        verified_findings: coverageFindings.length,
-        templated: coverageStatuses.filter((status) => status === 'templated').length,
-        explicitly_skipped: coverageStatuses.filter((status) => status === 'explicitly_skipped').length,
-        no_trusted_sink: coverageStatuses.filter((status) => status === 'no_trusted_sink').length,
-        unaccounted: coverageStatuses.filter((status) => status === 'unaccounted').length,
-      },
-      findings: coverageFindings,
-    };
-    await atomicWrite(path.join(deliverablesPath, 'explore_templates.json'), `${JSON.stringify(templates, null, 2)}\n`);
-    await atomicWrite(
-      path.join(deliverablesPath, 'explore_search_results.json'),
-      `${JSON.stringify(search, null, 2)}\n`,
-    );
-    await atomicWrite(
-      path.join(deliverablesPath, 'explore_template_coverage.json'),
-      `${JSON.stringify(coverage, null, 2)}\n`,
-    );
-    const lines = [
-      '# Template-based Source Exploration',
-      '',
-      'Templates are model-derived from record-verified sink locations. All repository search results below were generated deterministically by ripgrep.',
-      '',
-    ];
-    for (const template of templates)
-      lines.push(
-        `- ${template.finding_id} (${template.vulnerability_class}) — ${template.sink_file}:${template.sink_line} — \`${template.regex}\` — ${template.rationale}`,
-      );
-    if (!templates.length) lines.push('No templates were submitted.');
-    lines.push('', '## Template Coverage', '');
-    lines.push(
-      `Verified findings: ${coverage.summary.verified_findings}; templated: ${coverage.summary.templated}; explicitly skipped: ${coverage.summary.explicitly_skipped}; no trusted sink: ${coverage.summary.no_trusted_sink}; unaccounted: ${coverage.summary.unaccounted}.`,
-    );
-    for (const finding of coverageFindings) {
-      const detail =
-        finding.status === 'templated'
-          ? `${finding.template_count} template(s)`
-          : finding.status === 'explicitly_skipped'
-            ? `reason: ${String((finding as { reason?: string }).reason ?? '')}`
-            : finding.status === 'no_trusted_sink'
-              ? 'no exploited, record-verified sink location'
-              : `${String((finding as { trusted_sink_file_count?: number }).trusted_sink_file_count ?? 0)} trusted sink file(s) received neither a template nor a skip`;
-      lines.push(`- ${finding.finding_id} (${finding.vulnerability_class}): ${finding.status} — ${detail}`);
-    }
-    lines.push('', '## Search Yield By Template', '');
-    for (const stat of search.templates)
-      lines.push(
-        `- ${stat.finding_id} — ${stat.sink_file}:${stat.sink_line}: total ${stat.total_hits}, seed excluded ${stat.excluded_seed}, duplicate ${stat.duplicate_hits}, returned ${stat.returned_hits}${stat.truncated ? ' (per-template limit reached)' : ''}`,
-      );
-    if (!search.templates.length) lines.push('No template produced a searchable sink.');
-    lines.push('', '## Matching Source Locations', '');
-    for (const match of search.matches)
-      lines.push(
-        `- ${match.finding_id}: ${match.match_file}:${match.match_line} — \`${match.excerpt.replace(/`/g, '\\`')}\``,
-      );
-    if (!search.matches.length) lines.push('No additional source locations matched the submitted templates.');
-    if (search.truncated)
-      lines.push(
-        '',
-        'Search results were truncated. Per-template counts above show which template hit its limit; the returned list is interleaved across templates so one broad template cannot hide every later template.',
-      );
-    if (search.rejected.length) {
-      lines.push('', '## Rejected Templates', '');
-      for (const item of search.rejected) lines.push(`- ${item.template.finding_id}: ${item.reason}`);
-    }
-    await atomicWrite(path.join(deliverablesPath, 'explore_deliverable.md'), `${lines.join('\n')}\n`);
+  const seeds = [...seedsByKey.values()].sort((left, right) => {
+    const byFinding = left.findingId.localeCompare(right.findingId);
+    if (byFinding !== 0) return byFinding;
+    const byFile = left.file.localeCompare(right.file);
+    if (byFile !== 0) return byFile;
+    return left.line - right.line;
+  });
+  const search = await searchCloneCandidates(input.repoPath, seeds);
+  await writeAndCommitExactFiles(
+    dir,
+    [
+      { relPath: 'explore_search_results.json', contents: `${JSON.stringify(search.result, null, 2)}\n` },
+      { relPath: 'explore_seeds.json', contents: `${JSON.stringify(search.seeds, null, 2)}\n` },
+      { relPath: 'explore_clone_coverage.json', contents: `${JSON.stringify(search.coverage, null, 2)}\n` },
+      { relPath: 'explore_deliverable.md', contents: renderCloneExploreDeliverable(search) },
+      // The template-era artifacts are gone; remove any copies left behind by an older workspace.
+      { relPath: 'explore_templates.json', contents: null },
+      { relPath: 'explore_template_coverage.json', contents: null },
+    ],
+    'Explore deterministic clone retrieval',
+    logger,
+  );
+  logger.info('Explore deterministic clone retrieval complete', { ...search.coverage.summary });
+  return {
+    durationMs: Date.now() - startedAt,
+    inputTokens: null,
+    outputTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    costUsd: 0,
+    numTurns: 0,
   };
-  return runAgentActivity('explore', input, collector.tools, writeDeliverable);
+}
+
+/** Human-readable summary of one deterministic clone retrieval pass. */
+function renderCloneExploreDeliverable(search: CloneSearchOutcome): string {
+  const { coverage, result } = search;
+  const lines = [
+    '# Deterministic Clone Exploration',
+    '',
+    'Explore searched the assessed source tree for Type-2/Type-3 clones of record-verified sink',
+    'locations using normalized tokens (`normalized_token_clone_v1`). Identifier names and literal',
+    'values are erased and code structure is kept, so renamed or lightly edited implementations',
+    'still match. No model call was made, and no match here is vulnerability evidence: every',
+    'candidate must still be analyzed by the class expansion pass, including its guards and',
+    'authorization checks.',
+    '',
+    '- Supported languages: JavaScript/TypeScript family (.ts, .tsx, .mts, .cts, .js, .jsx, .mjs, .cjs)',
+    '- Retrieval: 5-gram inverted index; seed window 80 tokens (clamped to 40-120); candidate',
+    '  windows 50-150 tokens with a 10-token stride; similarity threshold 0.55; at most 10 matches',
+    '  per seed and 100 matches overall.',
+    `- Indexed: ${coverage.summary.indexed_files} file(s), ${coverage.summary.indexed_tokens} token(s).`,
+    `- Candidate windows: ${coverage.summary.indexed_windows}; skipped files: ${coverage.summary.skipped_files}.`,
+    `- Candidates dropped as unalignable: ${coverage.summary.unaligned_candidates}.`,
+    '',
+    '## Seeds',
+    '',
+  ];
+  for (const seed of coverage.seeds) {
+    if (seed.status === 'skipped') {
+      lines.push(
+        `- ${seed.finding_id} (${seed.vulnerability_class}) — ${seed.seed_file}:${seed.seed_line} — ` +
+          `skipped: ${seed.reason ?? 'unknown'}`,
+      );
+      continue;
+    }
+    lines.push(
+      `- ${seed.finding_id} (${seed.vulnerability_class}) — ${seed.seed_file}:${seed.seed_line} — ` +
+        `${seed.matched} match(es); ${seed.token_count} seed token(s) spanning lines ` +
+        `${seed.seed_start_line}-${seed.seed_end_line}`,
+    );
+  }
+  if (!coverage.seeds.length) lines.push('No record-verified sink locations were available.');
+  lines.push('', '## Matches', '');
+  const byFinding = new Map<string, typeof result.matches>();
+  for (const match of result.matches) {
+    byFinding.set(match.finding_id, [...(byFinding.get(match.finding_id) ?? []), match]);
+  }
+  const findings = [...byFinding.entries()].sort(([left], [right]) => left.localeCompare(right));
+  for (const [findingId, matches] of findings) {
+    const seed = coverage.seeds.find((candidate) => candidate.finding_id === findingId);
+    lines.push(`### ${findingId} — ${seed?.seed_file ?? '?'}:${String(seed?.seed_line ?? 0)}`, '');
+    for (const match of matches) {
+      const excerpt = match.excerpt.replace(/`/g, '\\`');
+      lines.push(
+        `- ${String(match.score)} — ${match.match_file}:${match.match_line} ` +
+          `(lines ${match.candidate_start_line}-${match.candidate_end_line}) — \`${excerpt}\``,
+      );
+    }
+    lines.push('');
+  }
+  if (!result.matches.length) lines.push('No similar implementation was found for any seed.', '');
+  if (coverage.summary.truncated)
+    lines.push(
+      'The scan or the match budget was capped; the counts above show what was indexed and returned,',
+      'so coverage is partial.',
+      '',
+    );
+  const skipReasons = Object.entries(coverage.skip_reasons).sort(([left], [right]) => left.localeCompare(right));
+  if (skipReasons.length) {
+    lines.push('## Skip Reasons', '');
+    for (const [reason, count] of skipReasons) lines.push(`- ${reason}: ${count}`);
+    lines.push('');
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 async function loadExploitReviews(dir: string): Promise<ExploitReviewResult[]> {

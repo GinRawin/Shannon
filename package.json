@@ -10,6 +10,7 @@
     "biome": "biome check .",
     "biome:fix": "biome check --write .",
     "clean": "turbo run clean",
+    "test:explore-clone": "node scripts/test-explore-clone-search.mjs",
     "temporal:worker": "node apps/worker/dist/temporal/worker.js",
     "temporal:start": "node apps/worker/dist/temporal/worker.js"
   },

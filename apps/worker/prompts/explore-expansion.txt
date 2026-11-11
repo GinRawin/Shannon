@@ -1,26 +1,27 @@
-<template_expansion_pass>
-This pass runs before the report. The source search results below are candidate locations matched by templates extracted from already confirmed findings. Analyze each candidate against its source context and decide whether it is a distinct, independently exploitable vulnerability or a related location that strengthens an existing finding.
+<clone_expansion_pass>
+This pass runs before the report. The source locations below are deterministic code-clone candidates for already confirmed findings. A candidate is a location whose normalized token sequence resembles the confirmed sink's local code after identifier renames, literal swaps, and small inserted or deleted statements. Analyze each candidate against its source context and decide whether it is a distinct, independently exploitable vulnerability or a related location that strengthens an existing finding.
 
 Each supplied target has:
 - `target_id`: a host-assigned ID such as `INJ-VULN-EXP-01`. It addresses the existing finding and may only be used to enrich that finding.
 - `finding_id`: the original record-verified producer ID. Never submit this ID again.
 - `vulnerability`: the original finding's recorded data.
-- `matches`: exact deterministic ripgrep hits for this target.
+- `matches`: exact deterministic clone hits, each with `match_file`, `match_line`, `candidate_start_line`, `candidate_end_line`, `score`, and `excerpt`.
 
 Use the existing vulnerability-class analysis rules and the normal `submit_exploitation_queue` tool.
 
 Identity rules:
-- To enrich an existing finding, use its exact `target_id` as the queue entry ID, and provide at least one `sink`-role code location whose range covers one of that target's supplied `match_file`/`match_line` hits.
+- To enrich an existing finding, use its exact `target_id` as the queue entry ID, and provide at least one `sink`-role code location whose range covers one of that target's supplied `match_line` hits.
 - To submit a genuinely new candidate, use a fresh producer ID in this class namespace (`NN` form, for example `INJ-VULN-41`). Never reuse an ID already owned by the original analysis; the host rejects reused producer IDs in-session.
 - Never use a `target_id` for a new finding, never copy a `finding_id`, and never invent target or producer IDs.
-- Every entry must include a precise `sink`-role code location that exactly covers a supplied deterministic match. Matches outside the provided list are not eligible for this pass.
+- Every entry must include a precise `sink`-role code location that covers a supplied deterministic `match_line`. A line outside the provided list is not eligible for this pass.
 
 Evidence rules:
-- A regex match is only an admission filter. It is not evidence of a vulnerability. Inspect the full relevant code path, data flow, guards, and authorization checks before confirming anything.
+- A similarity score is only an admission filter. It is not evidence of a vulnerability. Inspect the full relevant code path, data flow, guards, and authorization checks before confirming anything.
+- A candidate whose code is a safe variant — for example the same operation with an added ownership or role check — must be rejected, or accepted only after that difference has been analyzed and explained.
 - Keep the normal false-positive protections. Do not treat an arbitrary source mention, route declaration, generic annotation, or unrelated guard as a sink.
-- Do not report a candidate whose only support is that its file matched the template.
+- Do not report a candidate whose only support is that its code resembles the confirmed sink.
 - For accepted candidates, include enough class-specific analysis in the normal queue fields for the exploit agent to build a proof. The host assigns stable exploitation task IDs and runs a dedicated exploit pass for these candidates.
 
 If you cannot confirm any candidate, submit exactly `{"vulnerabilities": []}`. Do not fabricate entries, and do not reuse a target or producer ID just to avoid an empty submission.
 
-The matches are bounded search results. If they are truncated, assess the supplied matches and state that coverage is partial in your analysis. Do not edit source code or run additional repository searches.
+The candidate list is bounded search output. If it is truncated, assess the supplied candidates and state that coverage is partial in your analysis. Do not edit source code or run additional repository searches.

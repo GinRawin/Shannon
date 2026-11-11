@@ -90,6 +90,9 @@ importers:
       typebox:
         specifier: 1.1.38
         version: 1.1.38
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
       zx:
         specifier: ^8.0.0
         version: 8.8.5

@@ -118,15 +118,17 @@ Exploit Agent 为每个利用保存结构化 `http_replay` 计划，包含请求
 
 主要输出包括 `record_verification.json`、`record-failures.json`、`exploit_review_<class>.json`、`record-verification-failures.jsonl` 和各类别的 `*_recorded_exploitation_evidence.md`。采集到的 HTTP 数据包保存在 `.shannon/deliverables/http-exchanges/`。
 
-## 8. Explore：模板扩展
+## 8. Explore：代码克隆检索
 
-Explore Agent 只根据 record 通过的漏洞及其 sink 代码位置提炼少量搜索模板（例如 SQL 执行调用的正则），不负责扫描源码。随后由确定性程序用 ripgrep 搜索源码，校验模板确实匹配原 sink，并把命中位置交给对应类别的漏洞分析 Agent 做一次定向复核。
+Explore 不再调用 LLM。它读取 record 通过漏洞的已验证 sink 代码位置，在记录行附近截取一段局部 token 窗口作为 seed，用归一化词法 token（标识符与字面量抹平，关键字与运算符保留）建立 5-gram 倒排索引，在本次评估的源码仓库中检索类型 2/3 克隆：变量改名、字面量替换、少量语句增删之后依然相似的实现。首版只支持 JavaScript/TypeScript 家族（`.ts`、`.tsx`、`.mts`、`.cts`、`.js`、`.jsx`、`.mjs`、`.cjs`），其他语言按 `unsupported_language` 跳过。
+
+命中位置由 token 序列对齐确定：`match_line` 指向候选代码中与记录行锚点对应的那一行语句，而不是函数首行或窗口首行。相似度只是候选准入条件，不代表漏洞；补了鉴权检查的安全变体同样会被作为候选返回，由扩展分析排除。命中位置随后交给对应类别的漏洞分析 Agent 做一次定向复核。
 
 扩展分析会检查每个命中的完整数据流。属于原漏洞同一实例的位置会补充到原报告；独立漏洞候选只有在其 sink 精确对应 Explore 命中时才由宿主接收，并分配新的稳定 ID。新候选随后进入独立的 Exploit 和第二次 Record；最终报告只接收重放验证通过的影响证据，或因明确外部条件受阻但已有源码确认的发现。整个扩展只执行一轮，不递归回到 Explore。
 
 Record、Explore、各类别扩展分析、扩展 Exploit 和第二次 Record 都保存独立的持久完成状态与 Git checkpoint。恢复扫描会跳过已经完成的步骤；如果会影响目标的步骤在保存完成状态前中断，系统会要求人工确认，而不会自动重放请求。
 
-主要输出：`explore_templates.json`、`explore_search_results.json`、各类别的 `explore_candidates_*.json`、`explore_expansion_*.md` 以及扩展 Exploit/Record 证据。
+主要输出：`explore_search_results.json`、`explore_seeds.json`、`explore_clone_coverage.json`、`explore_deliverable.md`、各类别的 `explore_candidates_*.json`、`explore_expansion_*.md` 以及扩展 Exploit/Record 证据。
 
 ## 9. Report：最终报告
 

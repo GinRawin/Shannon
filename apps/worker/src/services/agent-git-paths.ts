@@ -102,7 +102,7 @@ export function getAgentGitPaths(agentName: AgentName, queueFilenameOverride?: s
     }
   }
   if (agentName === 'explore') {
-    paths.push('explore_templates.json', 'explore_search_results.json', 'explore_template_coverage.json');
+    paths.push('explore_search_results.json', 'explore_seeds.json', 'explore_clone_coverage.json');
   }
   const vulnExpansionArtifacts: Readonly<Partial<Record<AgentName, string>>> = {
     'injection-vuln': 'explore_expansion_injection.json',
