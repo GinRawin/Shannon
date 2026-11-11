@@ -144,6 +144,43 @@ Source-build examples:
 ./shannon build --no-cache
 ```
 
+### Sequential JSONL batch runs
+
+For source builds, `scripts/batch-start.mjs` runs one target at a time from either a JSONL queue or a
+JSON array. It re-reads the queue only after the active scan exits, so another process can write
+targets while a scan is running and can prepare or update each repository just in time.
+
+Each record must contain `web_url` and `code_location`. JSONL input looks like this:
+
+```jsonl
+{"web_url":"https://app-one.example.com","code_location":"/srv/repos/app-one"}
+{"web_url":"https://app-two.example.com","code_location":"/srv/repos/app-two"}
+```
+
+Run the queue and place any options shared by every `shannon start` invocation after `--`:
+
+```bash
+./scripts/batch-start.mjs /path/to/targets.jsonl -- \
+  --max-llm-requests-per-minute 10
+```
+
+Every scan automatically receives `-c <code_location>/config.yaml` and
+`--models-config /home/hjr/shannon/models.volcengine.json`. The project `config.yaml` must exist by
+the time its record is selected.
+
+JSON arrays are also accepted, including trailing commas before `}` or `]`. Records are claimed in
+file order. The queue itself is never modified; progress is stored in
+`<queue>.shannon-batch-state.json`, with `pending`, `running`, `completed`, or `failed` status. A
+record left running after an interrupted runner is retried on the next launch. A sibling lock file
+prevents two batch runners from consuming the same queue.
+
+The runner adds `--follow` automatically, continues after failed scans by default, and exits nonzero
+after draining the queue if any scan failed. Use `--stop-on-error` to stop immediately,
+`--retry-failed` to retry existing failed records once, or `--watch` to keep waiting for appended
+records. Do not pass `-u`/`--url`, `-r`/`--repo`, `-c`/`--config`, `--models-config`, or
+`-w`/`--workspace` after `--`; those values are managed by the runner, while each scan must keep its
+automatically generated workspace.
+
 `--max-llm-requests-per-minute` accepts a positive integer. The limit is global to one scan worker:
 top-level agents, delegated agents, credential preflight, and structured model calls share it. Request
 starts are evenly spaced rather than released in bursts; a value of `10` starts at most one model call

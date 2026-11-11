@@ -15,4 +15,4 @@ if [ -n "$TARGET_UID" ] && [ "$TARGET_UID" != "$CURRENT_UID" ]; then
   chown -R pentest:pentest /app/sessions /app/workspaces /tmp/.claude /tmp/.pi
 fi
 
-exec su -m pentest -c "exec $*"
+exec su -m pentest -c 'exec "$@"' -- sh "$@"
