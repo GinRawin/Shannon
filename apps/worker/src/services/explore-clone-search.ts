@@ -7,6 +7,11 @@
  * kept, so variable renames and literal swaps (Type-2) and small insertions or deletions within
  * shared code (Type-3) still match.
  *
+ * Each supported language has its own tokenizer behind one normalization contract (erased
+ * identifiers and literals, verbatim keywords and punctuation), and a seed is only ever compared
+ * with windows of its own language. Every non-JS/TS/Java extension is still reported as
+ * `unsupported_language` rather than being parsed by a guessed grammar.
+ *
  * The module is deliberately free of Agent/Temporal dependencies so it can be exercised offline
  * against a fixture repository, and it never calls an LLM. It only reports *similar code*; the
  * downstream expansion pass decides whether a candidate is actually vulnerable.
@@ -110,6 +115,8 @@ export interface CloneSeedRecord {
   readonly vulnerability_class: string;
   readonly seed_file: string;
   readonly seed_line: number;
+  /** Tokenizer language of the seed file; absent when its extension is unsupported. */
+  readonly language?: CloneLanguage;
   readonly status: 'eligible' | 'skipped';
   readonly token_count: number;
   readonly seed_start_line: number;
@@ -168,7 +175,30 @@ export interface CloneSearchOutcome {
   readonly coverage: CloneCoverageDocument;
 }
 
-const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
+/**
+ * Languages this pass tokenizes. A seed is admitted only when its own extension maps here, and a
+ * candidate window is only ever compared against a window of the seed's language, so a Java sink
+ * can never be matched against a JavaScript file that happens to share punctuation and keywords.
+ */
+export type CloneLanguage = 'typescript' | 'java';
+
+const LANGUAGE_BY_EXTENSION: ReadonlyMap<string, CloneLanguage> = new Map<string, CloneLanguage>([
+  ['.ts', 'typescript'],
+  ['.tsx', 'typescript'],
+  ['.mts', 'typescript'],
+  ['.cts', 'typescript'],
+  ['.js', 'typescript'],
+  ['.jsx', 'typescript'],
+  ['.mjs', 'typescript'],
+  ['.cjs', 'typescript'],
+  ['.java', 'java'],
+]);
+
+/** The tokenizer language for a repository-relative path, or `undefined` when it is unsupported. */
+export function cloneLanguageForPath(relPath: string): CloneLanguage | undefined {
+  return LANGUAGE_BY_EXTENSION.get(path.extname(relPath).toLowerCase());
+}
+
 
 const SKIPPED_DIRECTORIES = new Set([
   'node_modules',
@@ -180,6 +210,19 @@ const SKIPPED_DIRECTORIES = new Set([
   'build',
   'out',
   'coverage',
+  // Java build output: generated sources under target/ are byte-copies of the real ones, and
+  // retrieving them as Type-1 clones would spend the whole match budget on duplicates.
+  'target',
+  '.gradle',
+  '.mvn',
+  '.idea',
+  '.settings',
+  // Python caches and virtualenvs, when a Java project carries helper scripts.
+  '.mypy_cache',
+  '.pytest_cache',
+  '.ruff_cache',
+  '.tox',
+  'site-packages',
   '.next',
   '.nuxt',
   '.turbo',
@@ -200,6 +243,7 @@ interface NormalizedToken {
 
 interface IndexedFile {
   readonly relPath: string;
+  readonly language: CloneLanguage;
   readonly text: string;
   readonly lineStarts: number[];
   readonly tokens: NormalizedToken[];
@@ -338,7 +382,7 @@ function regexPrecedingKinds(): ReadonlySet<number> {
  * that are really regular-expression literals. Without them a single backtick or regular
  * expression silently swallows the rest of the file into one token.
  */
-function tokenizeSource(text: string): NormalizedToken[] {
+function tokenizeTypeScript(text: string): NormalizedToken[] {
   const ts = typeScript();
   const lineStarts = computeLineStarts(text);
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
@@ -368,11 +412,286 @@ function tokenizeSource(text: string): NormalizedToken[] {
   return tokens;
 }
 
-function buildIndexedFile(relPath: string, text: string): IndexedFile {
-  return { relPath, text, lineStarts: computeLineStarts(text), tokens: tokenizeSource(text) };
+/**
+ * Java keywords (JLS §3.9) plus `true`/`false`/`null`. Contextual keywords such as `var` or
+ * `record` stay identifiers: they are legal identifiers too, and erasing them keeps a rename from
+ * changing the token sequence.
+ */
+const JAVA_KEYWORDS = new Set([
+  'abstract',
+  'assert',
+  'boolean',
+  'break',
+  'byte',
+  'case',
+  'catch',
+  'char',
+  'class',
+  'const',
+  'continue',
+  'default',
+  'do',
+  'double',
+  'else',
+  'enum',
+  'extends',
+  'final',
+  'finally',
+  'float',
+  'for',
+  'goto',
+  'if',
+  'implements',
+  'import',
+  'instanceof',
+  'int',
+  'interface',
+  'long',
+  'native',
+  'new',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'short',
+  'static',
+  'strictfp',
+  'super',
+  'switch',
+  'synchronized',
+  'this',
+  'throw',
+  'throws',
+  'transient',
+  'try',
+  'void',
+  'volatile',
+  'while',
+  'true',
+  'false',
+  'null',
+]);
+
+/** Java punctuation and operators, longest first inside each leading character group. */
+const JAVA_OPERATORS: readonly string[] = [
+  '>>>=',
+  '>>>',
+  '>>=',
+  '>>',
+  '>=',
+  '>',
+  '<<=',
+  '<<',
+  '<=',
+  '<',
+  '...',
+  '.',
+  '->',
+  '--',
+  '-=',
+  '-',
+  '++',
+  '+=',
+  '+',
+  '*=',
+  '*',
+  '/=',
+  '/',
+  '%=',
+  '%',
+  '&&',
+  '&=',
+  '&',
+  '||',
+  '|=',
+  '|',
+  '^=',
+  '^',
+  '==',
+  '=',
+  '!=',
+  '!',
+  '::',
+  ':',
+  '~',
+  '?',
+  '@',
+  '{',
+  '}',
+  '(',
+  ')',
+  '[',
+  ']',
+  ';',
+  ',',
+];
+
+/** Operators bucketed by their first character, keeping the longest-first order above. */
+const JAVA_OPERATORS_BY_FIRST: ReadonlyMap<string, readonly string[]> = (() => {
+  const byFirst = new Map<string, string[]>();
+  for (const operator of JAVA_OPERATORS) {
+    const first = operator.slice(0, 1);
+    const bucket = byFirst.get(first);
+    if (bucket === undefined) byFirst.set(first, [operator]);
+    else bucket.push(operator);
+  }
+  return byFirst;
+})();
+
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
 }
 
-async function readSeedFile(root: string, relPath: string): Promise<IndexedFile | CloneSeedSkipReason> {
+/** Java identifier start: letters, `_`, `$`, and anything non-ASCII (Unicode letters). */
+function isJavaIdentifierStart(code: number): boolean {
+  return code === 95 || code === 36 || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code > 127;
+}
+
+function isJavaIdentifierPart(code: number): boolean {
+  return isJavaIdentifierStart(code) || isAsciiDigit(code);
+}
+
+/** Advance past a `//` comment to its line break (exclusive). */
+function skipToLineEnd(text: string, start: number): number {
+  let index = start;
+  while (index < text.length && text.charCodeAt(index) !== 10 && text.charCodeAt(index) !== 13) index += 1;
+  return index;
+}
+
+/** Advance past a block comment (slash-star through star-slash). Java block comments do not nest. */
+function skipBlockComment(text: string, start: number): number {
+  let index = start + 2;
+  while (index < text.length) {
+    if (text.charCodeAt(index) === 42 /* * */ && text.charCodeAt(index + 1) === 47 /* / */) return index + 2;
+    index += 1;
+  }
+  return text.length;
+}
+
+/**
+ * Advance past a quoted literal and return the index one past its closing delimiter. An
+ * unterminated single-line literal stops at the line break, and an unterminated text block stops
+ * at end of file: a single runaway token would silently destroy the whole file's token stream,
+ * which is worse than one wrong token.
+ */
+function skipJavaQuoted(text: string, start: number, delimiter: string, allowLineBreaks: boolean): number {
+  let index = start + delimiter.length;
+  while (index < text.length) {
+    const code = text.charCodeAt(index);
+    if (code === 92 /* backslash */) {
+      index += 2;
+      continue;
+    }
+    if (!allowLineBreaks && (code === 10 || code === 13)) return index;
+    if (text.startsWith(delimiter, index)) return index + delimiter.length;
+    index += 1;
+  }
+  return text.length;
+}
+
+/** Consume a numeric literal: radix prefixes, underscores, exponents, and type suffixes. */
+function scanJavaNumber(text: string, start: number): number {
+  let index = start;
+  while (index < text.length) {
+    const code = text.charCodeAt(index);
+    if (isJavaIdentifierPart(code)) {
+      index += 1;
+      continue;
+    }
+    // A `.` only continues the literal when a digit follows, so a member access is never eaten.
+    if (code === 46 /* . */ && isAsciiDigit(text.charCodeAt(index + 1))) {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
+/**
+ * Tokenize Java source into the shared normalization contract: identifiers, strings, character
+ * literals, text blocks, and numbers are erased; keywords, operators, and punctuation keep their
+ * shape. This is a lexer, not a parser, so `<` and `>>` are matched as the longest operator and a
+ * `\uXXXX` escape is not decoded.
+ */
+function tokenizeJava(text: string): NormalizedToken[] {
+  const lineStarts = computeLineStarts(text);
+  const tokens: NormalizedToken[] = [];
+  const length = text.length;
+  let index = 0;
+  const push = (norm: string, start: number): void => {
+    tokens.push({ norm, line: lineForOffset(lineStarts, start) });
+  };
+  while (index < length) {
+    const code = text.charCodeAt(index);
+    if (code === 32 || code === 9 || code === 10 || code === 13 || code === 12 || code === 11) {
+      index += 1;
+      continue;
+    }
+    if (code === 47 /* / */ && text.charCodeAt(index + 1) === 47 /* / */) {
+      index = skipToLineEnd(text, index);
+      continue;
+    }
+    if (code === 47 /* / */ && text.charCodeAt(index + 1) === 42 /* * */) {
+      index = skipBlockComment(text, index);
+      continue;
+    }
+    if (code === 34 /* " */) {
+      const start = index;
+      const isTextBlock = text.startsWith('"""', index);
+      index = skipJavaQuoted(text, index, isTextBlock ? '"""' : '"', isTextBlock);
+      push('STR', start);
+      continue;
+    }
+    if (code === 39 /* ' */) {
+      const start = index;
+      index = skipJavaQuoted(text, index, "'", false);
+      push('STR', start);
+      continue;
+    }
+    if (isAsciiDigit(code)) {
+      const start = index;
+      index = scanJavaNumber(text, start);
+      push('NUM', start);
+      continue;
+    }
+    if (isJavaIdentifierStart(code)) {
+      const start = index;
+      index += 1;
+      while (index < length && isJavaIdentifierPart(text.charCodeAt(index))) index += 1;
+      const word = text.slice(start, index);
+      push(JAVA_KEYWORDS.has(word) ? word : 'IDENT', start);
+      continue;
+    }
+    const operator = JAVA_OPERATORS_BY_FIRST.get(text[index] ?? '')?.find((candidate) =>
+      text.startsWith(candidate, index),
+    );
+    if (operator !== undefined) {
+      push(operator, index);
+      index += operator.length;
+      continue;
+    }
+    // An unrecognized byte must never stall the scan.
+    index += 1;
+  }
+  return tokens;
+}
+
+/** Tokenize one supported source file with its own language's tokenizer. */
+function tokenizeSource(text: string, language: CloneLanguage): NormalizedToken[] {
+  return language === 'java' ? tokenizeJava(text) : tokenizeTypeScript(text);
+}
+
+function buildIndexedFile(relPath: string, text: string, language: CloneLanguage): IndexedFile {
+  return { relPath, language, text, lineStarts: computeLineStarts(text), tokens: tokenizeSource(text, language) };
+}
+
+async function readSeedFile(
+  root: string,
+  relPath: string,
+  language: CloneLanguage,
+): Promise<IndexedFile | CloneSeedSkipReason> {
   let real: string;
   try {
     real = await fs.realpath(path.resolve(root, relPath));
@@ -382,7 +701,11 @@ async function readSeedFile(root: string, relPath: string): Promise<IndexedFile 
   if (!isInside(root, real)) return 'seed_path_outside_repository';
   try {
     if (!(await fs.stat(real)).isFile()) return 'seed_path_not_regular_file';
-    return buildIndexedFile(path.relative(root, real).split(path.sep).join('/'), await fs.readFile(real, 'utf8'));
+    return buildIndexedFile(
+      path.relative(root, real).split(path.sep).join('/'),
+      await fs.readFile(real, 'utf8'),
+      language,
+    );
   } catch {
     return 'seed_unreadable';
   }
@@ -527,6 +850,7 @@ async function indexCorpus(
   root: string,
   cache: Map<string, IndexedFile>,
   options: CloneSearchOptions,
+  languages: ReadonlySet<CloneLanguage>,
 ): Promise<IndexedCorpus> {
   const files: IndexedFile[] = [];
   const windows: TokenWindow[] = [];
@@ -553,7 +877,8 @@ async function indexCorpus(
         continue;
       }
       if (!entry.isFile()) continue;
-      if (!SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+      const language = cloneLanguageForPath(entry.name);
+      if (language === undefined || !languages.has(language)) continue;
       if (
         files.length >= options.maxFiles ||
         totalTokens >= options.maxTotalTokens ||
@@ -573,7 +898,7 @@ async function indexCorpus(
             truncated = true;
             continue;
           }
-          file = buildIndexedFile(relPath, await fs.readFile(absolute, 'utf8'));
+          file = buildIndexedFile(relPath, await fs.readFile(absolute, 'utf8'), language);
           cache.set(relPath, file);
         } catch {
           skippedFiles++;
@@ -628,7 +953,12 @@ async function indexCorpus(
  * containment ratio (multiset intersection over the seed's own k-grams), which is stable when the
  * candidate window is much larger than the seed.
  */
-function rankWindows(seedKgrams: Uint32Array, corpus: IndexedCorpus, options: CloneSearchOptions): RankedCandidate[] {
+function rankWindows(
+  seedKgrams: Uint32Array,
+  corpus: IndexedCorpus,
+  options: CloneSearchOptions,
+  seedLanguage: CloneLanguage,
+): RankedCandidate[] {
   const shared = new Map<number, number>();
   let offset = 0;
   while (offset < seedKgrams.length) {
@@ -639,6 +969,9 @@ function rankWindows(seedKgrams: Uint32Array, corpus: IndexedCorpus, options: Cl
     for (const windowId of corpus.inverted.get(kgram) ?? []) {
       const window = corpus.windows[windowId];
       if (window === undefined) continue;
+      // A window of another language can share punctuation and keyword shapes without sharing
+      // any meaning, so it is never a candidate for this seed.
+      if (corpus.files[window.fileIndex]?.language !== seedLanguage) continue;
       const candidateCount = countInSorted(window.kgrams, kgram);
       if (candidateCount === 0) continue;
       shared.set(windowId, (shared.get(windowId) ?? 0) + Math.min(seedCount, candidateCount));
@@ -775,12 +1108,17 @@ interface PreparedSeed {
   readonly anchorToken: number;
 }
 
-function skippedRecord(seed: CloneSearchSeed, reason: CloneSeedSkipReason): CloneSeedRecord {
+function skippedRecord(
+  seed: CloneSearchSeed,
+  reason: CloneSeedSkipReason,
+  language?: CloneLanguage,
+): CloneSeedRecord {
   return {
     finding_id: seed.findingId,
     vulnerability_class: seed.vulnerabilityClass,
     seed_file: seed.file,
     seed_line: seed.line,
+    ...(language !== undefined && { language }),
     status: 'skipped',
     token_count: 0,
     seed_start_line: 0,
@@ -801,22 +1139,25 @@ async function prepareSeed(
   seed: CloneSearchSeed,
   options: CloneSearchOptions,
 ): Promise<{ prepared?: PreparedSeed; record: CloneSeedRecord }> {
-  if (!Number.isInteger(seed.line) || seed.line < 1) return { record: skippedRecord(seed, 'invalid_seed_line') };
-  if (!SOURCE_EXTENSIONS.has(path.extname(seed.file).toLowerCase()))
-    return { record: skippedRecord(seed, 'unsupported_language') };
+  const language = cloneLanguageForPath(seed.file);
+  if (!Number.isInteger(seed.line) || seed.line < 1)
+    return { record: skippedRecord(seed, 'invalid_seed_line', language) };
+  if (language === undefined) return { record: skippedRecord(seed, 'unsupported_language') };
   let file = cache.get(seed.file);
   if (file === undefined) {
-    const loaded = await readSeedFile(root, seed.file);
-    if (typeof loaded === 'string') return { record: skippedRecord(seed, loaded) };
+    const loaded = await readSeedFile(root, seed.file, language);
+    if (typeof loaded === 'string') return { record: skippedRecord(seed, loaded, language) };
     file = loaded;
     cache.set(loaded.relPath, loaded);
   }
   const anchorToken = chooseAnchorToken(file.tokens, seed.line, options.anchorWidenLines);
   const anchor = anchorToken === undefined ? undefined : file.tokens[anchorToken];
-  if (anchorToken === undefined || anchor === undefined) return { record: skippedRecord(seed, 'no_anchor_token') };
+  if (anchorToken === undefined || anchor === undefined)
+    return { record: skippedRecord(seed, 'no_anchor_token', language) };
   const target = Math.min(options.seedMaxTokens, Math.max(options.seedMinTokens, options.seedTargetTokens));
   const { startToken, endToken } = extractSeedWindow(file.tokens.length, anchorToken, target);
-  if (endToken - startToken < options.minSeedTokens) return { record: skippedRecord(seed, 'seed_too_short') };
+  if (endToken - startToken < options.minSeedTokens)
+    return { record: skippedRecord(seed, 'seed_too_short', language) };
   return {
     prepared: { seed, file, startToken, endToken, anchorToken },
     record: {
@@ -824,6 +1165,7 @@ async function prepareSeed(
       vulnerability_class: seed.vulnerabilityClass,
       seed_file: seed.file,
       seed_line: seed.line,
+      language,
       status: 'eligible',
       token_count: endToken - startToken,
       seed_start_line: file.tokens[startToken]?.line ?? seed.line,
@@ -855,7 +1197,7 @@ export async function searchCloneCandidates(
 
   for (const [index, seed] of seeds.entries()) {
     if (index >= options.maxSeeds) {
-      records.push(skippedRecord(seed, 'seed_limit'));
+      records.push(skippedRecord(seed, 'seed_limit', cloneLanguageForPath(seed.file)));
       truncated = true;
       continue;
     }
@@ -864,7 +1206,10 @@ export async function searchCloneCandidates(
     if (prepared !== undefined) preparedSeeds.push({ prepared, recordIndex: records.length - 1 });
   }
 
-  const corpus = await indexCorpus(root, cache, options);
+  // Indexing is scoped to the languages this run actually needs, so a Java-only scan never reads,
+  // tokenizes, or matches the repository's JavaScript frontend.
+  const seedLanguages = new Set(preparedSeeds.map(({ prepared }) => prepared.file.language));
+  const corpus = await indexCorpus(root, cache, options, seedLanguages);
   truncated = truncated || corpus.truncated;
 
   const matches: CloneMatch[] = [];
@@ -878,7 +1223,7 @@ export async function searchCloneCandidates(
     const kgrams = new Uint32Array(Math.max(0, seedIds.length - options.kGram + 1));
     for (let offset = 0; offset < kgrams.length; offset++) kgrams[offset] = hashKgram(seedIds, offset, options.kGram);
     kgrams.sort();
-    const ranked = rankWindows(kgrams, corpus, options);
+    const ranked = rankWindows(kgrams, corpus, options, prepared.file.language);
     const built = buildSeedMatches(prepared, ids, ranked, corpus, options);
     unalignedCandidates += built.unaligned;
     seedMatchesById.set(index, built.matches);

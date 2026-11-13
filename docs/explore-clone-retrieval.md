@@ -6,11 +6,19 @@ assessed source tree, and every match is only a *similar-looking location*. The 
 pass still decides whether that location is vulnerable, so a safe variant (for example the same
 operation with an added ownership check) is deliberately still returned as a candidate.
 
+Explore is a first-class pipeline stage: it opens its own audit session, so `workflow.log` shows
+`[AGENT] explore: Starting (attempt 1)` / `[AGENT] explore: Completed (...)` and the per-agent
+`agents/explore.log` records the pass, exactly like the model-backed agents.
+
 ## Supported Languages
 
-The first version supports the JavaScript/TypeScript family only: `.ts`, `.tsx`, `.mts`, `.cts`,
-`.js`, `.jsx`, `.mjs`, `.cjs`. Other extensions are reported as `unsupported_language` seeds rather
-than being parsed by a foreign grammar.
+Two language families are tokenized: the JavaScript/TypeScript family (`.ts`, `.tsx`, `.mts`, `.cts`,
+`.js`, `.jsx`, `.mjs`, `.cjs`) and Java (`.java`). Each file is indexed with the tokenizer for its
+own language, and a seed only matches windows from the same language, so an erased identifier or
+literal cannot produce a false cross-language hit. Any other extension is reported as an
+`unsupported_language` seed rather than being parsed by a foreign grammar. A scan only indexes the
+languages that actually have an eligible seed, so a Java-only job never reads the JS/TS sources (and
+the reverse).
 
 ## How It Works
 
@@ -22,7 +30,8 @@ than being parsed by a foreign grammar.
    identifier if one exists, otherwise the rarest identifier, otherwise any token). A contiguous
    window of 80 tokens (clamped to 40-120) is centred on it. Fewer than 25 tokens is reported as
    `seed_too_short`.
-3. **Normalization.** Tokens come from the TypeScript scanner. Identifiers, strings, template
+3. **Normalization.** Tokens come from the scanner for the file's language (TypeScript scanner for
+   the JS/TS family, a Java scanner for `.java`). Identifiers, strings, character/text-block
    literals, numbers, and regular expressions are erased to `IDENT` / `STR` / `NUM` / `REGEX`, while
    keywords, operators, and punctuation keep their shape. Renames and literal swaps therefore leave
    the token sequence unchanged (Type-2), and small inserted or deleted statements only break the
@@ -118,13 +127,15 @@ Type-2 rename/literal clones and three Type-3 clones (one with an inserted state
 deleted statement, one with both). It also covers a safe clone with an added authorization check, an
 unrelated implementation that shares only a method name, seed self-exclusion, skip reasons (missing
 file, unsupported language, too short, symlink escape), deterministic ordering, the global match cap,
-and downstream admission of the exact match line.
+and downstream admission of the exact match line. The Java fixtures repeat the same labelled set —
+Type-2, Type-3, a safe variant, an unrelated file, and language isolation (a Java seed indexes only
+the Java sources and never returns a JavaScript/TypeScript clone).
 
 ## Known Limitations
 
 - Lexical/structural only: no AST, data flow, taint, or semantic (Type-4) matching, and no
   cross-language clones.
-- Only the JavaScript/TypeScript family is tokenized; other languages are skipped.
+- Only the JavaScript/TypeScript family and Java are tokenized; other languages are skipped.
 - The similarity score is a retrieval signal, not a vulnerability judgement.
 - Large repositories are capped; inspect `truncated` and `explore_clone_coverage.json` before
   treating coverage as complete.

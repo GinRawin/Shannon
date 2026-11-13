@@ -1927,9 +1927,44 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
  * No model call is made: record-verified sink locations are cut into local normalized-token
  * windows and matched against an inverted n-gram index of the repository. Matches are code
  * similarity candidates only; the class expansion pass decides whether any of them is vulnerable.
+ * The body is deterministic, but it is still wrapped as a first-class `explore` stage so the
+ * workflow log and `agents/explore.log` show an explicit start/end like every other agent.
  * Resume safety comes from the surrounding durable post-exploitation marker, not from this body.
  */
 export async function runExploreAgent(input: ActivityInput): Promise<AgentMetrics> {
+  const auditSession = new AuditSession(buildSessionMetadata(input));
+  await auditSession.initialize(input.workflowId);
+  await auditSession.startAgent('explore', 1);
+  const startedAt = Date.now();
+  try {
+    const metrics = await runExploreCloneRetrieval(input);
+    await auditSession.endAgent('explore', {
+      attemptNumber: 1,
+      duration_ms: metrics.durationMs,
+      cost_usd: 0,
+      turns: 0,
+      success: true,
+    });
+    return metrics;
+  } catch (error) {
+    await auditSession
+      .endAgent('explore', {
+        attemptNumber: 1,
+        duration_ms: Date.now() - startedAt,
+        cost_usd: 0,
+        turns: 0,
+        success: false,
+        isFinalAttempt: false,
+      })
+      .catch(() => undefined);
+    throw error;
+  } finally {
+    await auditSession.releaseAgentLog('explore').catch(() => undefined);
+  }
+}
+
+/** Body of the {@link runExploreAgent} stage; the wrapper owns its audit log lifecycle. */
+async function runExploreCloneRetrieval(input: ActivityInput): Promise<AgentMetrics> {
   const { searchCloneCandidates } = await import('../services/explore-clone-search.js');
   const logger = createActivityLogger();
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
@@ -2012,9 +2047,13 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
     'Explore deterministic clone retrieval',
     logger,
   );
-  logger.info('Explore deterministic clone retrieval complete', { ...search.coverage.summary });
+  const durationMs = Date.now() - startedAt;
+  logger.info('Explore deterministic clone retrieval complete', {
+    ...search.coverage.summary,
+    duration_ms: durationMs,
+  });
   return {
-    durationMs: Date.now() - startedAt,
+    durationMs,
     inputTokens: null,
     outputTokens: null,
     cacheReadTokens: null,
@@ -2037,7 +2076,7 @@ function renderCloneExploreDeliverable(search: CloneSearchOutcome): string {
     'candidate must still be analyzed by the class expansion pass, including its guards and',
     'authorization checks.',
     '',
-    '- Supported languages: JavaScript/TypeScript family (.ts, .tsx, .mts, .cts, .js, .jsx, .mjs, .cjs)',
+    '- Supported languages: JavaScript/TypeScript family (.ts, .tsx, .mts, .cts, .js, .jsx, .mjs, .cjs) and Java (.java)',
     '- Retrieval: 5-gram inverted index; seed window 80 tokens (clamped to 40-120); candidate',
     '  windows 50-150 tokens with a 10-token stride; similarity threshold 0.55; at most 10 matches',
     '  per seed and 100 matches overall.',

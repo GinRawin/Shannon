@@ -8,7 +8,7 @@
  * temporary directory so symlink and path-escape cases can be created safely.
  */
 import assert from 'node:assert/strict';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -128,6 +128,86 @@ try {
   assert.equal(bounded.result.matches.length, 1);
   assert.equal(bounded.result.truncated, true, 'hitting the global match cap must disclose truncation');
   console.log('PASS the global match cap is enforced and disclosed');
+
+  // --- Java fixture block -----------------------------------------------------
+  // A Java seed must retrieve Java Type-2/Type-3 clones only, without reading the JS/TS side.
+  const javaSeedLine = await lineOf('src/OrderDao.java', 'statement.executeQuery(sql)');
+  const javaDocumentLine = await lineOf('src/DocumentDao.java', 'stmt.executeQuery(query)');
+  const javaInvoiceLine = await lineOf('src/InvoiceDao.java', 'stmt.executeQuery(query)');
+  const javaUserLine = await lineOf('src/UserDao.java', 'statement.executeQuery(sql)');
+  const javaTicketLine = await lineOf('src/TicketDao.java', 'stmt.executeQuery(query)');
+  const javaReportLine = await lineOf('src/ReportDao.java', 'stmt.executeQuery(query)');
+  const javaPaymentLine = await lineOf('src/PaymentDao.java', 'stmt.executeQuery(query)');
+  const javaAdminLine = await lineOf('src/AdminOrderDao.java', 'statement.executeQuery(sql)');
+
+  const javaSeeds = [
+    { findingId: 'JINJ-01', vulnerabilityClass: 'injection', file: 'src/OrderDao.java', line: javaSeedLine },
+    { findingId: 'JINJ-02', vulnerabilityClass: 'injection', file: 'src/legacy.py', line: 3 },
+  ];
+  const javaOutcome = await searchCloneCandidates(dir, javaSeeds);
+  const javaMatches = javaOutcome.result.matches;
+  const javaFind = (file) => javaMatches.find((match) => match.match_file === file);
+
+  assert.equal(javaOutcome.result.statistics.eligible_seed_count, 1);
+  const javaSourceCount = (await readdir(path.join(dir, 'src'))).filter((name) => name.endsWith('.java')).length;
+  assert.equal(
+    javaOutcome.coverage.summary.indexed_files,
+    javaSourceCount,
+    'a Java-only seed must index exactly the Java sources and skip the JavaScript/TypeScript side',
+  );
+  assert.equal(
+    javaOutcome.result.skipped_seeds.find((record) => record.finding_id === 'JINJ-02').reason,
+    'unsupported_language',
+    'a non-Java/TypeScript seed is still reported as unsupported_language',
+  );
+
+  const javaCloned = javaFind('src/DocumentDao.java');
+  assert.ok(javaCloned, 'the Java Type-2 clone must be retrieved');
+  assert.equal(javaCloned.match_line, javaDocumentLine, 'the Java clone match_line must be the real statement line');
+  assert.ok(javaCloned.score >= 0.9, `Java Type-2 clone score ${javaCloned.score} should be near 1.0`);
+  assert.equal(javaCloned.seed_file, 'src/OrderDao.java');
+  assert.equal(javaCloned.seed_line, javaSeedLine);
+  assert.equal(javaCloned.finding_id, 'JINJ-01');
+  assert.equal(javaCloned.vulnerability_class, 'injection');
+
+  const javaLabelled = [
+    ['src/InvoiceDao.java', javaInvoiceLine, 'Type-2 rename + string literal'],
+    ['src/UserDao.java', javaUserLine, 'Type-2 rename'],
+    ['src/TicketDao.java', javaTicketLine, 'Type-3 insertion'],
+    ['src/ReportDao.java', javaReportLine, 'Type-3 insertion + deletion'],
+    ['src/PaymentDao.java', javaPaymentLine, 'Type-3 deletion'],
+  ];
+  for (const [file, line, kind] of javaLabelled) {
+    const hit = javaFind(file);
+    assert.ok(hit, `the Java ${kind} clone ${file} must be retrieved`);
+    assert.equal(hit.match_line, line, `${file} match_line must be the real statement line of the clone`);
+    assert.ok(hit.score >= 0.55, `${file} score ${hit.score} must clear the similarity threshold`);
+  }
+  assert.ok(javaFind('src/PaymentDao.java').score < javaCloned.score, 'the Java deletion variant must score below a near-identical Type-2');
+
+  const javaSafe = javaFind('src/AdminOrderDao.java');
+  assert.ok(javaSafe, 'a safe Java clone with an extra authorization check is still a retrieval candidate');
+  assert.equal(javaSafe.match_line, javaAdminLine);
+
+  assert.equal(javaFind('src/OrderDao.java'), undefined, 'the Java seed location must not be returned as a new match');
+  assert.equal(javaFind('src/CacheOrderDao.java'), undefined, 'a Java file sharing only the method name must not match');
+  assert.equal(javaFind('src/documents.ts'), undefined, 'a Java-only seed must never return a JavaScript/TypeScript clone');
+  assert.equal(javaOutcome.coverage.summary.matched, javaMatches.length);
+
+  const javaOrder = javaMatches.map((match) => `${match.match_file}:${match.match_line}`);
+  assert.deepEqual(
+    javaOrder,
+    [...javaOrder].sort((left, right) => javaOrder.indexOf(left) - javaOrder.indexOf(right)),
+    'Java matches are returned in a stable score/file/line order',
+  );
+
+  const javaRepeat = await searchCloneCandidates(dir, javaSeeds);
+  assert.equal(
+    JSON.stringify(javaRepeat.result),
+    JSON.stringify(javaOutcome.result),
+    'identical Java input must produce byte-identical results',
+  );
+  console.log('PASS Java Type-2/Type-3 clone retrieval, language isolation, safe variant, and determinism');
 
   assert.equal(
     locationMatchesExploreSearch({ file: cloned.match_file, start_line: cloned.match_line, role: 'sink' }, matches),
