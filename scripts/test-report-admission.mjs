@@ -275,3 +275,79 @@ await writeLoop('record_verification.json', [failedVerdict('INJ-07')]);
 assert.deepEqual([...(await loadRecordReportFindingIds(loopDir))], []);
 assert.ok((await validateRecordReportAdmission(loopDir)).includes('INJ-07: missing verified Record verdict'));
 console.log('PASS committed report assembly includes verified findings only and rechecks proof after finalization');
+
+// Compaction spans both lanes: an expansion task is minted directly in the report namespace, so a
+// kept expansion reference has to enter the dense numbering instead of failing the report.
+const expansionDir = `${temporary}/expansion-compaction`;
+await mkdir(expansionDir);
+await run('git', ['init'], { cwd: expansionDir });
+const initialReceipt = await persistCapturedTrace({
+  deliverablesDir: expansionDir, findingId: 'AUTH-02', trace: retryTrace, exitCode: 0,
+});
+const expansionReceipt = await persistCapturedTrace({
+  deliverablesDir: expansionDir, findingId: 'AUTH-19', trace: retryTrace, exitCode: 0,
+});
+const expansionFiles = {
+  'auth_renumber_map.json': map('auth', { 'AUTH-01': 'AUTH-01', 'AUTH-02': 'AUTH-02' }),
+  'auth_exploit_collector_renumbered.json': [
+    { ...strictEntry('AUTH-01', initialReceipt), title: 'INITIAL_DROPPED' },
+    { ...strictEntry('AUTH-02', initialReceipt), title: 'INITIAL_SURVIVOR' },
+  ],
+  'explore_expansion_auth_exploit_queue.json': { vulnerabilities: [{ ID: 'AUTH-19' }, { ID: 'AUTH-20' }] },
+  'explore_expansion_auth_exploit_collector.json': [
+    { ...strictEntry('AUTH-19', expansionReceipt), title: 'EXPANSION_SURVIVOR' },
+    { ...strictEntry('AUTH-20', expansionReceipt), title: 'EXPANSION_DROPPED' },
+  ],
+  'report.json': {
+    report_meta: { target: 'https://fixture.invalid', assessment_date: '2026-11-02', scope: 'Fixture', executive_summary: 'Fixture' },
+    findings: [{ ...finding('AUTH-02'), title: 'INITIAL_SURVIVOR' }, { ...finding('AUTH-19'), title: 'EXPANSION_SURVIVOR' }],
+    reconciliation_failed: [],
+  },
+};
+for (const [name, value] of Object.entries(expansionFiles))
+  await writeFile(path.join(expansionDir, name), `${JSON.stringify(value, null, 2)}\n`);
+await run('git', ['add', '--', '.'], { cwd: expansionDir, env });
+await run('git', ['commit', '-m', 'Expansion compaction fixtures'], { cwd: expansionDir, env });
+const expansionCompaction = await compactReportFindings({
+  deliverablesDir: expansionDir, participatingClasses: ['auth'], renumberFailedClasses: [],
+  logger: { info() {}, warn() {}, error() {} },
+});
+assert.equal(expansionCompaction.skipped, false);
+const compactedExpansion = JSON.parse(await readFile(path.join(expansionDir, 'report.json'), 'utf8'));
+assert.deepEqual(compactedExpansion.findings.map((item) => item.finding_id), ['AUTH-01', 'AUTH-02']);
+assert.equal(compactedExpansion.findings[1].title, 'EXPANSION_SURVIVOR');
+assert.deepEqual(
+  JSON.parse(await readFile(path.join(expansionDir, 'auth_renumber_map.json'), 'utf8')).map,
+  { 'AUTH-02': 'AUTH-01', 'AUTH-19': 'AUTH-02' },
+);
+assert.deepEqual(
+  JSON.parse(await readFile(path.join(expansionDir, 'explore_expansion_auth_exploit_collector.json'), 'utf8'))
+    .map((entry) => entry.vulnerability_id),
+  ['AUTH-02', 'AUTH-20'],
+);
+console.log('PASS a kept expansion reference joins the dense report numbering and keeps its replay entry');
+
+// Widening the namespace from an arbitrary collector entry stays refused: only references the
+// committed expansion queue declares may enter the report numbering.
+const unqueuedDir = `${temporary}/expansion-unqueued`;
+await mkdir(unqueuedDir);
+await run('git', ['init'], { cwd: unqueuedDir });
+const unqueuedFiles = {
+  ...expansionFiles,
+  'explore_expansion_auth_exploit_queue.json': { vulnerabilities: [{ ID: 'AUTH-20' }] },
+  'report.json': {
+    report_meta: { target: 'https://fixture.invalid', assessment_date: '2026-11-02', scope: 'Fixture', executive_summary: 'Fixture' },
+    findings: [finding('AUTH-19')],
+    reconciliation_failed: [],
+  },
+};
+for (const [name, value] of Object.entries(unqueuedFiles))
+  await writeFile(path.join(unqueuedDir, name), `${JSON.stringify(value, null, 2)}\n`);
+await run('git', ['add', '--', '.'], { cwd: unqueuedDir, env });
+await run('git', ['commit', '-m', 'Unqueued expansion fixture'], { cwd: unqueuedDir, env });
+const unqueuedFailure = await compactReportFindings({
+  deliverablesDir: unqueuedDir, participatingClasses: ['auth'], renumberFailedClasses: [],
+  logger: { info() {}, warn() {}, error() {} },
+}).then(() => null, (error) => error);
+assert.equal(unqueuedFailure?.details?.checkCode, 'compaction-kept-reference-not-minted');
+console.log('PASS an expansion reference absent from the committed queue is still refused');

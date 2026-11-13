@@ -13,6 +13,7 @@ import type { ActivityLogger } from '../types/activity-logger.js';
 import type { ReconciliationClass } from '../types/reconciliation.js';
 import type { ExactOutputCommit, ExactOutputFile } from './exact-output-commit.js';
 import { RenumberError, writeAndCommitExactFiles } from './exact-output-commit.js';
+import { expansionCollectorFilename, expansionExploitQueueFilename } from './expansion-queues.js';
 import { readCommittedFile } from './git-manager.js';
 import type { ExcludedEntry, SastProvenanceFile } from './renumber-core.js';
 import {
@@ -214,6 +215,52 @@ export function remapReportFindings(
   });
 }
 
+/**
+ * Expansion tasks are minted directly in the report namespace rather than derived from the initial
+ * collector, so the class map has no entry for them. Registering the committed candidate references
+ * as identity entries lets the dense renumbering span both lanes without inventing a translation.
+ * Only references the committed expansion queue declares are registered: report admission refuses
+ * an expansion identity that is not in that queue, so compaction must not widen the namespace beyond
+ * what admission already accepts.
+ */
+function registerExpansionReferences(
+  vulnerabilityClass: ReconciliationClass,
+  renumberMap: RenumberMapFile,
+  queueReferences: readonly string[],
+): RenumberMapFile {
+  const minted = new Set(Object.values(renumberMap.map));
+  const map: Record<string, string> = { ...renumberMap.map };
+  const order = [...renumberMap.order];
+  let registered = false;
+  for (const reference of queueReferences) {
+    if (parseRefNumber(reference, vulnerabilityClass) === null) continue;
+    if (Object.hasOwn(map, reference) || minted.has(reference)) continue;
+    map[reference] = reference;
+    order.push(reference);
+    minted.add(reference);
+    registered = true;
+  }
+  return registered ? { ...renumberMap, map, order } : renumberMap;
+}
+
+/**
+ * Expansion collectors are authored evidence rather than a derived renumbering, so every entry
+ * survives compaction: an entry the report did not keep keeps its own reference instead of being
+ * dropped or rewritten. Kept references still move with the report so saved replay plans stay
+ * reachable under the compacted numbering.
+ */
+export function remapExpansionCollector(
+  entries: readonly AddExploitInput[],
+  allGapMap: ReadonlyMap<string, string>,
+): AddExploitInput[] {
+  return entries.map((entry) => {
+    const rewritten = deepRemapStrings(entry, allGapMap) as Record<string, unknown>;
+    const reference = (entry as unknown as { vulnerability_id?: unknown }).vulnerability_id;
+    if (typeof reference === 'string') rewritten.vulnerability_id = allGapMap.get(reference) ?? reference;
+    return rewritten as unknown as AddExploitInput;
+  });
+}
+
 export function plannedReportReferenceOperations(exploit: boolean): readonly ('renumber' | 'compact')[] {
   return exploit ? ['renumber', 'compact'] : [];
 }
@@ -234,6 +281,41 @@ async function readRequiredCommittedJson<T>(dir: string, relPath: string, checkC
   const read = await readCommittedFile(dir, relPath);
   if (read.state !== 'present') throw new RenumberError('key-set-divergence', false, { checkCode });
   return parseJson<T>(read.contents, checkCode);
+}
+
+/** Committed expansion candidate references; absent means the class never expanded. */
+async function readExpansionQueueReferences(dir: string, vulnerabilityClass: ReconciliationClass): Promise<string[]> {
+  const read = await readCommittedFile(dir, expansionExploitQueueFilename(vulnerabilityClass));
+  if (read.state === 'absent') return [];
+  if (read.state !== 'present') {
+    throw new RenumberError('key-set-divergence', false, { checkCode: 'compaction-expansion-queue-unreadable' });
+  }
+  const decoded = parseJson<unknown>(read.contents, 'compaction-expansion-queue-not-json');
+  if (!isRecord(decoded) || !Array.isArray(decoded.vulnerabilities)) {
+    throw new RenumberError('key-set-divergence', false, { checkCode: 'compaction-expansion-queue-malformed' });
+  }
+  const references: string[] = [];
+  for (const entry of decoded.vulnerabilities) {
+    const reference = isRecord(entry) ? entry.ID : undefined;
+    if (typeof reference === 'string') references.push(reference);
+  }
+  return references;
+}
+
+async function readExpansionCollector(
+  dir: string,
+  vulnerabilityClass: ReconciliationClass,
+): Promise<AddExploitInput[] | undefined> {
+  const read = await readCommittedFile(dir, expansionCollectorFilename(vulnerabilityClass));
+  if (read.state === 'absent') return undefined;
+  if (read.state !== 'present') {
+    throw new RenumberError('key-set-divergence', false, { checkCode: 'compaction-expansion-unreadable' });
+  }
+  const decoded = parseJson<unknown>(read.contents, 'compaction-expansion-not-json');
+  if (!Array.isArray(decoded)) {
+    throw new RenumberError('key-set-divergence', false, { checkCode: 'compaction-expansion-malformed' });
+  }
+  return decoded as AddExploitInput[];
 }
 
 function parseSastProvenance(value: unknown): SastProvenanceFile {
@@ -307,6 +389,7 @@ export async function compactReportFindings(args: {
   const compactions: Array<{
     compaction: ClassCompaction;
     collector: AddExploitInput[];
+    expansionCollector?: AddExploitInput[];
     provenance?: SastProvenanceFile;
   }> = [];
   for (const vulnerabilityClass of args.participatingClasses) {
@@ -325,7 +408,12 @@ export async function compactReportFindings(args: {
     if (mapRead.state !== 'present') {
       throw new RenumberError('key-set-divergence', false, { checkCode: 'compaction-map-unreadable' });
     }
-    const renumberMap = parseJson<RenumberMapFile>(mapRead.contents, 'compaction-map-not-json');
+    const parsedMap = parseJson<RenumberMapFile>(mapRead.contents, 'compaction-map-not-json');
+    const renumberMap = registerExpansionReferences(
+      vulnerabilityClass,
+      parsedMap,
+      await readExpansionQueueReferences(args.deliverablesDir, vulnerabilityClass),
+    );
     const compaction = buildClassCompaction(vulnerabilityClass, keptReferences, renumberMap);
     const collector = await readRequiredCommittedJson<AddExploitInput[]>(
       args.deliverablesDir,
@@ -347,7 +435,13 @@ export async function compactReportFindings(args: {
     if (provenanceRead.state === 'present') {
       provenance = parseSastProvenance(parseJson<unknown>(provenanceRead.contents, 'compaction-provenance-not-json'));
     }
-    compactions.push({ compaction, collector, ...(provenance !== undefined && { provenance }) });
+    const expansionCollector = await readExpansionCollector(args.deliverablesDir, vulnerabilityClass);
+    compactions.push({
+      compaction,
+      collector,
+      ...(expansionCollector !== undefined && { expansionCollector }),
+      ...(provenance !== undefined && { provenance }),
+    });
   }
 
   if (compactions.length === 0) return { compactedClasses: 0, skipped: true };
@@ -358,7 +452,7 @@ export async function compactReportFindings(args: {
   }
 
   const files: ExactOutputFile[] = [];
-  for (const { compaction, collector, provenance } of compactions) {
+  for (const { compaction, collector, expansionCollector, provenance } of compactions) {
     files.push({
       relPath: renumberedExploitCollectorPath(compaction.vulnerabilityClass),
       contents: `${JSON.stringify(remapExploitCollector(collector, compaction.gapMap, allGapMap), null, 2)}\n`,
@@ -367,6 +461,12 @@ export async function compactReportFindings(args: {
       relPath: renumberMapPath(compaction.vulnerabilityClass),
       contents: `${JSON.stringify(compaction.renumberMapFile, null, 2)}\n`,
     });
+    if (expansionCollector !== undefined) {
+      files.push({
+        relPath: expansionCollectorFilename(compaction.vulnerabilityClass),
+        contents: `${JSON.stringify(remapExpansionCollector(expansionCollector, allGapMap), null, 2)}\n`,
+      });
+    }
     if (provenance !== undefined) {
       files.push({
         relPath: renumberedSastProvenancePath(compaction.vulnerabilityClass),
