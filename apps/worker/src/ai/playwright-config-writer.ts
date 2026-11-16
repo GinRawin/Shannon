@@ -16,6 +16,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { SHANNON_USER_AGENT } from '../user-agent.js';
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -64,8 +65,7 @@ function buildStealthConfig(initScriptPath: string) {
         viewport: { width: 1920, height: 1080 },
         locale: 'en-US',
         extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
-        userAgent:
-          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        userAgent: SHANNON_USER_AGENT,
       },
       initScript: [initScriptPath],
     },

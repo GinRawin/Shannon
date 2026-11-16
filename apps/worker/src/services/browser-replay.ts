@@ -4,6 +4,7 @@ import path from 'node:path';
 import { type BrowserContext, chromium, type Page } from 'playwright-core';
 import { type Static, Type } from 'typebox';
 import { Value } from 'typebox/value';
+import { SHANNON_USER_AGENT } from '../user-agent.js';
 import type { HttpEvidenceReceipt } from './capture-http-request.js';
 import { containsReplaySecret } from './http-replay.js';
 
@@ -203,6 +204,7 @@ export async function verifyBrowserReplay(args: {
     phase = 'browser_context';
     const context = await browser.newContext({
       serviceWorkers: 'block',
+      userAgent: SHANNON_USER_AGENT,
       ignoreHTTPSErrors: args.plan.insecure ?? false,
       ...(storageState ? { storageState } : {}),
     });

@@ -7,6 +7,7 @@ import { mkdir, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Type } from 'typebox';
 import { Value } from 'typebox/value';
+import { SHANNON_USER_AGENT } from '../user-agent.js';
 import { type HttpEvidenceReceipt, persistCapturedTrace } from './capture-http-request.js';
 import { snapshotCurlInvocation } from './curl-invocation.js';
 
@@ -214,6 +215,7 @@ import json, os, pathlib, re, subprocess, sys, base64
 from datetime import datetime, timezone
 
 VARIABLES = ("BASE_URL", "BEARER_TOKEN", "COOKIE", "USERNAME", "PASSWORD", "OTP")
+USER_AGENT = ${JSON.stringify(SHANNON_USER_AGENT)}
 os.umask(0o077)
 def interpolate(value, variables):
     def replace(match):
@@ -246,6 +248,9 @@ def execute_step(step, variables, directory, index):
     if "body_json" in step:
         payload = json.dumps(json_values(step["body_json"])).encode()
         if not any(key.lower() == "content-type" for key in headers): headers["Content-Type"] = "application/json"
+    # Identify Shannon to the target's operators unless the plan sets its own User-Agent.
+    if not any(key.lower() == "user-agent" for key in headers):
+        args += ["--user-agent", USER_AGENT]
     for key, value in headers.items():
         value = interpolate(value, variables)
         if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_|~-]+", key) or "\r" in value or "\n" in value:

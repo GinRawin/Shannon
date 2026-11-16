@@ -3061,7 +3061,8 @@ export async function initDeliverableGit(input: ActivityInput): Promise<void> {
  * Drop a stealth cli.config.json into the repo's .playwright/ directory so
  * `playwright-cli open` auto-loads anti-detection defaults from the agent's
  * cwd (disables the Blink AutomationControlled flag, drops the
- * --enable-automation default, and overrides the HeadlessChrome user agent).
+ * --enable-automation default, and sends the Shannon identification
+ * User-Agent so target operators see the run as an authorised test).
  *
  * No-op when the repo already has its own .playwright/cli.config.json.
  */

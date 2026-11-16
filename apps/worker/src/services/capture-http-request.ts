@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { withCurlUserAgent } from '../user-agent.js';
 import { type CurlInvocation, snapshotCurlInvocation } from './curl-invocation.js';
 import { type ParsedHttpTrace, parseCurlTrace } from './http-capture.js';
 
@@ -170,6 +171,8 @@ export async function captureHttpRequest(args: {
   onStderr?: (data: Buffer) => void;
 }): Promise<{ receipt: HttpEvidenceReceipt; stdout: string; stderr: string }> {
   validateCurlCaptureArguments(args.curlArguments);
+  // Identify Shannon to the target's operators unless the invocation already sets a User-Agent.
+  const curlArguments = withCurlUserAgent(args.curlArguments);
   const timeout = args.timeoutSeconds ?? 120;
   if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 600)
     throw new Error('HTTP capture timeout must be between 1 and 600 seconds');
@@ -180,7 +183,7 @@ export async function captureHttpRequest(args: {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const temporary = await mkdtemp(path.join(directory, '.capture-'));
   const tracePath = path.join(temporary, 'curl.trace');
-  const invocation = await snapshotCurlInvocation(args.curlArguments, args.cwd ?? process.cwd(), timeout, args.secrets);
+  const invocation = await snapshotCurlInvocation(curlArguments, args.cwd ?? process.cwd(), timeout, args.secrets);
   const stdout: Buffer[] = [],
     stderr: Buffer[] = [];
   let stdoutLength = 0,
@@ -192,7 +195,7 @@ export async function captureHttpRequest(args: {
     return length + data.length;
   };
   try {
-    const child = spawn('curl', ['--disable', ...args.curlArguments, '--trace', tracePath], {
+    const child = spawn('curl', ['--disable', ...curlArguments, '--trace', tracePath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       ...(args.cwd ? { cwd: args.cwd } : {}),
