@@ -120,15 +120,17 @@ Exploit Agent 为每个利用保存结构化 `http_replay` 计划，包含请求
 
 ## 8. Explore：代码克隆检索
 
-Explore 不再调用 LLM。它读取 record 通过漏洞的已验证 sink 代码位置，在记录行附近截取一段局部 token 窗口作为 seed，用归一化词法 token（标识符与字面量抹平，关键字与运算符保留）建立 5-gram 倒排索引，在本次评估的源码仓库中检索类型 2/3 克隆：变量改名、字面量替换、少量语句增删之后依然相似的实现。首版只支持 JavaScript/TypeScript 家族（`.ts`、`.tsx`、`.mts`、`.cts`、`.js`、`.jsx`、`.mjs`、`.cjs`），其他语言按 `unsupported_language` 跳过。
+Explore 不再调用 LLM。它读取 record 通过漏洞的已验证 sink 代码位置，用 Tree-sitter 把记录行定位到 AST 锚点（优先 call/assignment/return 语句），并以该锚点为中心构造 sink-anchored AST forest（锚点完整语句 + 同块相邻兄弟语句 + 最多 3 级 `if`/`loop`/`try`/lambda 控制上下文，绝不跨函数边界）。检索不再依赖 token 序列：先提取 AST 结构特征（节点类型、带字段的父子边、深度 2/3 的子树形状、控制上下文）建立带 IDF 权重的倒排索引做召回，再对 Top-N 候选执行**有序树/森林近似匹配**（允许整棵语句子树插入、删除、替换，并施加锚点对应约束），最终输出节点映射与结构改动清单。这样能在父子/兄弟/嵌套关系层面区分候选，发现变量改名、字面量替换、以及插删语句子树之后的类型 2/3 克隆。支持 JavaScript/TypeScript 家族（`.ts`、`.tsx`、`.mts`、`.cts`、`.js`、`.jsx`、`.mjs`、`.cjs`）与 Java（`.java`）；同语言匹配，JS/TS 与 Java 不互相匹配，其他语言按 `unsupported_language` 跳过。
 
-命中位置由 token 序列对齐确定：`match_line` 指向候选代码中与记录行锚点对应的那一行语句，而不是函数首行或窗口首行。相似度只是候选准入条件，不代表漏洞；补了鉴权检查的安全变体同样会被作为候选返回，由扩展分析排除。命中位置随后交给对应类别的漏洞分析 Agent 做一次定向复核。
+命中位置由树匹配的锚点映射确定：`match_line` 指向候选 AST 中与记录行锚点对应的可执行语句真实行号，而不是函数首行、窗口首行或虚拟根行号；锚点无法唯一映射时直接跳过并记入 `unmapped_anchors`/`ambiguous_anchors`，绝不伪造行号。结果工件（`explore_search_results.json`/`explore_seeds.json`/`explore_clone_coverage.json`）为 schema v3（`algorithm: ast_structural_clone_v1`），逐条 `match` 仍保留 `finding_id`、`vulnerability_class`、`seed_file`、`seed_line`、`match_file`、`match_line`、`candidate_start_line`、`candidate_end_line`、`score`、`excerpt` 等字段，并新增可选的 `ast_evidence`（召回分、树相似度、映射节点数、插入/删除子树数、控制上下文是否变化、锚点是否映射）。统计新增 `parse_failed_files`、`indexed_forests`、`retrieval_candidates`、`reranked_candidates`、`unmapped_anchors`、`ambiguous_anchors`、`matcher_budget_exceeded`、`parser_language_unsupported`。相似度只是候选准入条件，不代表漏洞；补了鉴权检查的安全变体同样会被作为候选返回，由扩展分析排除。命中位置随后交给对应类别的漏洞分析 Agent 做一次定向复核。
 
 扩展分析会检查每个命中的完整数据流。属于原漏洞同一实例的位置会补充到原报告；独立漏洞候选只有在其 sink 精确对应 Explore 命中时才由宿主接收，并分配新的稳定 ID。新候选随后进入独立的 Exploit 和第二次 Record；最终报告只接收重放验证通过的影响证据，或因明确外部条件受阻但已有源码确认的发现。整个扩展只执行一轮，不递归回到 Explore。
 
 Record、Explore、各类别扩展分析、扩展 Exploit 和第二次 Record 都保存独立的持久完成状态与 Git checkpoint。恢复扫描会跳过已经完成的步骤；如果会影响目标的步骤在保存完成状态前中断，系统会要求人工确认，而不会自动重放请求。
 
 主要输出：`explore_search_results.json`、`explore_seeds.json`、`explore_clone_coverage.json`、`explore_deliverable.md`、各类别的 `explore_candidates_*.json`、`explore_expansion_*.md` 以及扩展 Exploit/Record 证据。
+
+算法限制与回退：AST 匹配只表示结构相似，`tree_similarity` 不是漏洞概率；解析失败、语法不兼容或零相似候选是两种不同的情形，前者按 `parse_error` 跳过并在 `parse_failed_files` 中计数。旧版归一化 token 检索（`normalized_token_clone_v1`，schema v2）保留为离线 baseline，不再作为生产默认：**仅当显式设置** `SHANNON_EXPLORE_ALGORITHM` 为 `token`/`v2`/`normalized_token_clone_v1` 时才切回 v2；未设置、空值、未知值以及 `ast`/`v3` 一律走 AST 结构化检索 v3。离线测试：`pnpm test:explore-ast`（AST v3 检索服务，覆盖 T01–T19）、`pnpm test:explore-ast-activity`（真实调用 `runExploreAgent` Activity：验证默认=v3、显式 `token`=v2、种子门槛、工件提交与重跑幂等）、`pnpm test:explore-clone`（Token baseline）。
 
 ## 9. Report：最终报告
 

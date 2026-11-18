@@ -11,6 +11,8 @@
     "biome:fix": "biome check --write .",
     "clean": "turbo run clean",
     "test:explore-clone": "node scripts/test-explore-clone-search.mjs",
+    "test:explore-ast": "node scripts/test-explore-ast-clone-search.mjs",
+    "test:explore-ast-activity": "node scripts/test-explore-ast-activity.mjs",
     "temporal:worker": "node apps/worker/dist/temporal/worker.js",
     "temporal:start": "node apps/worker/dist/temporal/worker.js"
   },

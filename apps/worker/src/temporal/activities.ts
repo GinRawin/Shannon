@@ -44,7 +44,7 @@ import { type BrowserReplayPlan, verifyBrowserReplay } from '../services/browser
 import { compactReportFindings as compactReportFindingsService } from '../services/compaction-core.js';
 import { getContainer, getOrCreateContainer, removeContainer } from '../services/container.js';
 import { classifyErrorForTemporal, PentestError } from '../services/error-handling.js';
-import { RenumberError, writeAndCommitExactFiles } from '../services/exact-output-commit.js';
+import { type ExactOutputFile, RenumberError, writeAndCommitExactFiles } from '../services/exact-output-commit.js';
 import {
   expansionAnalysisFilename,
   expansionExploitQueueFilename,
@@ -54,6 +54,8 @@ import {
   nextExpansionExploitTaskNumber,
 } from '../services/expansion-queues.js';
 import { ExploitationCheckerService } from '../services/exploitation-checker.js';
+import type { AstCloneSearchOutcome } from '../services/explore-ast/types.js';
+import { AST_SEARCH_DEFAULTS } from '../services/explore-ast/types.js';
 import type { CloneSearchOutcome, CloneSearchSeed } from '../services/explore-clone-search.js';
 import { locationMatchesExploreSearch } from '../services/explore-search.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
@@ -1965,7 +1967,6 @@ export async function runExploreAgent(input: ActivityInput): Promise<AgentMetric
 
 /** Body of the {@link runExploreAgent} stage; the wrapper owns its audit log lifecycle. */
 async function runExploreCloneRetrieval(input: ActivityInput): Promise<AgentMetrics> {
-  const { searchCloneCandidates } = await import('../services/explore-clone-search.js');
   const logger = createActivityLogger();
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   const startedAt = Date.now();
@@ -2032,24 +2033,38 @@ async function runExploreCloneRetrieval(input: ActivityInput): Promise<AgentMetr
     if (byFile !== 0) return byFile;
     return left.line - right.line;
   });
-  const search = await searchCloneCandidates(input.repoPath, seeds);
-  await writeAndCommitExactFiles(
-    dir,
-    [
+  const artifacts: ExactOutputFile[] = [];
+  let logSummary: Record<string, unknown>;
+  if (resolveExploreAlgorithm() === 'ast') {
+    const { searchAstCloneCandidates } = await import('../services/explore-ast/search.js');
+    const search = await searchAstCloneCandidates(input.repoPath, seeds);
+    artifacts.push(
+      { relPath: 'explore_search_results.json', contents: `${JSON.stringify(search.result, null, 2)}\n` },
+      { relPath: 'explore_seeds.json', contents: `${JSON.stringify(search.seeds, null, 2)}\n` },
+      { relPath: 'explore_clone_coverage.json', contents: `${JSON.stringify(search.coverage, null, 2)}\n` },
+      { relPath: 'explore_deliverable.md', contents: renderAstCloneExploreDeliverable(search) },
+    );
+    logSummary = { ...search.coverage.summary, algorithm: search.result.algorithm };
+  } else {
+    const { searchCloneCandidates } = await import('../services/explore-clone-search.js');
+    const search = await searchCloneCandidates(input.repoPath, seeds);
+    artifacts.push(
       { relPath: 'explore_search_results.json', contents: `${JSON.stringify(search.result, null, 2)}\n` },
       { relPath: 'explore_seeds.json', contents: `${JSON.stringify(search.seeds, null, 2)}\n` },
       { relPath: 'explore_clone_coverage.json', contents: `${JSON.stringify(search.coverage, null, 2)}\n` },
       { relPath: 'explore_deliverable.md', contents: renderCloneExploreDeliverable(search) },
-      // The template-era artifacts are gone; remove any copies left behind by an older workspace.
-      { relPath: 'explore_templates.json', contents: null },
-      { relPath: 'explore_template_coverage.json', contents: null },
-    ],
-    'Explore deterministic clone retrieval',
-    logger,
+    );
+    logSummary = { ...search.coverage.summary, algorithm: search.result.algorithm };
+  }
+  // The template-era artifacts are gone; remove any copies left behind by an older workspace.
+  artifacts.push(
+    { relPath: 'explore_templates.json', contents: null },
+    { relPath: 'explore_template_coverage.json', contents: null },
   );
+  await writeAndCommitExactFiles(dir, artifacts, 'Explore deterministic clone retrieval', logger);
   const durationMs = Date.now() - startedAt;
   logger.info('Explore deterministic clone retrieval complete', {
-    ...search.coverage.summary,
+    ...logSummary,
     duration_ms: durationMs,
   });
   return {
@@ -2061,6 +2076,102 @@ async function runExploreCloneRetrieval(input: ActivityInput): Promise<AgentMetr
     costUsd: 0,
     numTurns: 0,
   };
+}
+
+/**
+ * Explore retrieval algorithm selector. AST v3 is the structural Tree-sitter retriever and is used
+ * for every value of `SHANNON_EXPLORE_ALGORITHM`, including unset/empty/unknown. The legacy
+ * normalized-token retriever (v2) is opt-in only: it is selected just when the variable is set to
+ * one of {@link TOKEN_ALGORITHM_VALUES}.
+ */
+type ExploreAlgorithm = 'token' | 'ast';
+
+/** Explicit opt-in values for the legacy v2 token retriever; anything else resolves to v3. */
+const TOKEN_ALGORITHM_VALUES: ReadonlySet<string> = new Set(['token', 'v2', 'normalized_token_clone_v1']);
+
+function resolveExploreAlgorithm(): ExploreAlgorithm {
+  const value = process.env.SHANNON_EXPLORE_ALGORITHM?.trim().toLowerCase();
+  return value !== undefined && TOKEN_ALGORITHM_VALUES.has(value) ? 'token' : 'ast';
+}
+
+/** Human-readable summary of one AST structural clone retrieval pass (Explore v3). */
+function renderAstCloneExploreDeliverable(search: AstCloneSearchOutcome): string {
+  const { coverage, result } = search;
+  const lines = [
+    '# AST Structural Clone Exploration',
+    '',
+    'Explore searched the assessed source tree for Type-2/Type-3 clones of record-verified sink',
+    'locations using Sink-anchored AST forests and ordered tree matching (`ast_structural_clone_v1`).',
+    'Each seed line is mapped to an AST anchor, expanded into a local statement forest with its',
+    'control context, recalled through a structural-feature index, and finally aligned with an',
+    'ordered tree/forest edit match. No model call was made, and no match here is vulnerability',
+    'evidence: every candidate must still be analyzed by the class expansion pass, including its',
+    'guards and authorization checks.',
+    '',
+    '- Supported languages: JavaScript/TypeScript family (.js, .jsx, .mjs, .cjs, .ts, .mts, .cts, .tsx) and Java (.java)',
+    '- Retrieval: AST node / typed-edge / depth-2/3 subtree-shape features with IDF-weighted Dice recall,',
+    `  then an anchored ordered-tree match (min tree similarity ${String(AST_SEARCH_DEFAULTS.minTreeSimilarity)});`,
+    `  at most ${String(AST_SEARCH_DEFAULTS.maxPreciseMatchesPerSeed)} matches per seed and ${String(AST_SEARCH_DEFAULTS.maxTotalMatches)} overall.`,
+    `- Indexed: ${coverage.summary.indexed_files} file(s), ${coverage.summary.indexed_forests} candidate forest(s).`,
+    `- Retrieved ${coverage.summary.retrieval_candidates} candidate(s); structure-matched ${coverage.summary.reranked_candidates}.`,
+    `- Anchors not mapped to a candidate sink (dropped): ${coverage.summary.unmapped_anchors}; ambiguous seed anchors: ${coverage.summary.ambiguous_anchors}.`,
+    `- Parse failures: ${coverage.summary.parse_failed_files}; matcher budget exceeded: ${coverage.summary.matcher_budget_exceeded}.`,
+    '',
+    '## Seeds',
+    '',
+  ];
+  for (const seed of coverage.seeds) {
+    if (seed.status === 'skipped') {
+      lines.push(
+        `- ${seed.finding_id} (${seed.vulnerability_class}) — ${seed.seed_file}:${seed.seed_line} — ` +
+          `skipped: ${seed.reason ?? 'unknown'}`,
+      );
+      continue;
+    }
+    lines.push(
+      `- ${seed.finding_id} (${seed.vulnerability_class}) — ${seed.seed_file}:${seed.seed_line} — ` +
+        `${seed.matched} match(es); ${seed.node_count} seed node(s); ${seed.anchor_candidates} anchor(s); ` +
+        `context depth ${seed.context_depth}`,
+    );
+  }
+  if (!coverage.seeds.length) lines.push('No record-verified sink locations were available.');
+  lines.push('', '## Matches', '');
+  const byFinding = new Map<string, typeof result.matches>();
+  for (const match of result.matches) {
+    byFinding.set(match.finding_id, [...(byFinding.get(match.finding_id) ?? []), match]);
+  }
+  const findings = [...byFinding.entries()].sort(([left], [right]) => left.localeCompare(right));
+  for (const [findingId, matches] of findings) {
+    const seed = coverage.seeds.find((candidate) => candidate.finding_id === findingId);
+    lines.push(`### ${findingId} — ${seed?.seed_file ?? '?'}:${String(seed?.seed_line ?? 0)}`, '');
+    for (const match of matches) {
+      const excerpt = match.excerpt.replace(/`/g, '\\`');
+      const evidence = match.ast_evidence;
+      lines.push(
+        `- ${String(match.score)} — ${match.match_file}:${match.match_line} ` +
+          `(lines ${match.candidate_start_line}-${match.candidate_end_line}) — ` +
+          `tree ${String(evidence.tree_similarity)}, recall ${String(evidence.retrieval_score)}, ` +
+          `anchor ${String(evidence.anchor_confidence)}, mapped ${evidence.mapped_nodes} node(s), ` +
+          `+${evidence.inserted_subtrees}/-${evidence.deleted_subtrees} subtree(s), ` +
+          `context changed: ${String(evidence.control_context_changed)} — \`${excerpt}\``,
+      );
+    }
+    lines.push('');
+  }
+  if (!result.matches.length) lines.push('No similar implementation was found for any seed.', '');
+  if (coverage.summary.truncated)
+    lines.push(
+      'The scan or the match budget was capped; the counts above show what was indexed and returned,',
+      'so coverage is partial.',
+      '',
+    );
+  const skipReasons = Object.entries(coverage.skip_reasons).sort(([left], [right]) => left.localeCompare(right));
+  if (skipReasons.length) {
+    lines.push('## Skip Reasons', '');
+    for (const [reason, count] of skipReasons) lines.push(`- ${reason}: ${count}`);
+    lines.push('');
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 /** Human-readable summary of one deterministic clone retrieval pass. */

@@ -53,8 +53,12 @@
     "handlebars": "^4.7.9",
     "js-yaml": "^4.1.0",
     "playwright-core": "1.56.1",
+    "tree-sitter-java": "0.23.5",
+    "tree-sitter-javascript": "0.25.0",
+    "tree-sitter-typescript": "0.23.2",
     "typebox": "1.1.38",
     "typescript": "^5.9.3",
+    "web-tree-sitter": "0.26.9",
     "zx": "^8.0.0"
   },
   "devDependencies": {
