@@ -268,7 +268,7 @@ flowchart TD
     EXP -- "Exploit demonstrated" --> RECORD["Record replay + packet capture"]
     EXP -- "Blocked by external condition<br/>with source evidence" --> REPORT["Reporting<br/>PDF · Markdown · SARIF"]
     EXP -- "Unsupported or false positive" --> DROP["Discard"]
-    RECORD -- "Replay verified" --> EXPLORE["Bounded source template expansion"]
+    RECORD -- "Replay verified" --> EXPLORE["AST structural clone expansion<br/>(Type-2/Type-3)"]
     RECORD -- "Replay inconclusive" --> REVIEW["Manual review"]
     EXPLORE --> REPORT
 
@@ -304,6 +304,7 @@ Use these guides for operational detail:
 | [Workspaces and resuming](docs/workspaces.md)             | Naming workspaces, resuming interrupted scans, and workspace storage.                                                                                                     |
 | [Safety and limitations](docs/safety.md)                  | Authorized-use requirements, non-production guidance, mutative effects, cost, and model caveats.                                                                          |
 | [Coverage and roadmap](docs/coverage-roadmap.md)          | Current vulnerability coverage and planned work.                                                                                                                          |
+| [Explore clone retrieval](docs/explore-clone-retrieval.md) | How the Explore stage finds Type-2/Type-3 clones of record-verified sinks with AST structural matching (and the legacy token baseline).                                    |
 | [Keygraph Enterprise Platform](docs/keygraph-platform.md) | Exhaustive agentic SAST, continuous pentesting, full-lifecycle finding management, remediation, targeted verification, enterprise governance, and on-premises deployment. |
 
 
