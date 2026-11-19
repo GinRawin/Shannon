@@ -36,7 +36,10 @@ const DATA_FILENAME = 'data.json';
 const TEMPLATE_FILENAME = 'report.typ';
 const OUTPUT_FILENAME = 'report.pdf';
 
-export const PDF_RENDERER_VERSION = '5';
+// v7 clips oversized code blocks in the PDF-only display projection to a single rendered page;
+// v6 clipped them at a fixed character budget. Either way the projection changed, so provenance
+// from an earlier renderer must not be reused.
+export const PDF_RENDERER_VERSION = '7';
 
 const REQUIRED_FONTS = ['NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc'] as const;
 

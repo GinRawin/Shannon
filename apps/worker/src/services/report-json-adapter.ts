@@ -97,8 +97,33 @@ function toTypstCategory(s: string): TypstCategory {
 // and the exact Typst-side payload remain byte-for-byte intact.
 const PDF_CODE_LINE_COLUMNS = 84;
 
+// A captured HTTP body can run to many megabytes on a single line: binary payloads arrive
+// Base64-encoded, and an unpaginated endpoint can return an entire table in one response. Typst's
+// layout cost scales with the projected character count, not the line count, so an unbounded
+// projection can stall the PDF compile far past any activity timeout while the Markdown and JSON
+// reports stay correct. The display projection is therefore clipped to one page of the rendered
+// report with a visible notice; `content` keeps the complete payload.
+//
+// One page was measured against the bundled template (A4, 2.2 cm margins, DejaVu Sans Mono 8.5 pt,
+// `par(leading: 0.5em)`, 8 pt block inset): 64 wrapped lines still fit on a single page and 65 push
+// the block onto a second. The budget leaves room for the one-line notice, so a clipped block stays
+// within one page even when it follows a line of prose.
+const PDF_CODE_PAGE_LINES = 63;
+const PDF_CODE_MAX_CHARACTERS = PDF_CODE_LINE_COLUMNS * PDF_CODE_PAGE_LINES;
+
+function clipCodeForPdf(content: string): string {
+  // A block that overruns the page budget by less than one line is left whole: clipping it would
+  // drop a handful of characters for no layout gain, and the notice itself costs a line.
+  if (content.length <= PDF_CODE_MAX_CHARACTERS + PDF_CODE_LINE_COLUMNS) return content;
+  let head = content.slice(0, PDF_CODE_MAX_CHARACTERS);
+  // Never split a surrogate pair: a lone half renders as a replacement glyph.
+  const lastUnit = head.charCodeAt(head.length - 1);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) head = head.slice(0, -1);
+  return `${head}\n… ${content.length - head.length} more characters omitted from the PDF (clipped to one page). The full payload stays in the Markdown and JSON reports.`;
+}
+
 function wrapCodeForPdf(content: string): string {
-  return content
+  return clipCodeForPdf(content)
     .split('\n')
     .flatMap((line) => {
       const characters = Array.from(line);
