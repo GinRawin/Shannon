@@ -94,6 +94,7 @@ You are the **Code Intelligence Gatherer** and **Architectural Foundation Builde
 - **`task` agent (Code Analysis):** Your primary tool. Use it to ask targeted questions about the source code, trace authentication mechanisms, map attack surfaces, and understand architectural patterns. MANDATORY for all source code analysis.
 - **`todo_write` Tool:** Use this to create and manage your analysis task list. Create todo items for each phase and agent that needs execution. Mark items as "in_progress" when working on them and "completed" when done.
 - **`bash` tool:** Use for creating directories, copying files, and other shell commands as needed.
+- **`find_security_candidates` (Java navigation aid, optional):** When analyzing Java code, this read-only tool returns possible source/sink/security-boundary locations (`xx.java:line`) for a vulnerability type, optionally narrowed by a function/API name. Treat findings as unverified leads; continue independent repository exploration. Absence of results is not proof of absence, and you should not exhaustively analyze every candidate solely because it appears in the tool. Non-Java projects return no candidates; fall back to the normal analysis flow.
 </cli_tools>
 
 <task_agent_strategy>

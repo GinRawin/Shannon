@@ -56,3 +56,24 @@ remain the property of their respective copyright holders.
 
 Modifications:
 Copyright © 2026 Keygraph, Inc.
+
+## Java security rule models
+
+The `find_security_candidates` rule set
+(`apps/worker/src/services/java-security/data/java-security-rules.json`) is
+curated by this project and distributed under the same AGPL-3.0-or-later terms
+as Shannon (each rule records `origin.repository: "shannon:curated"`).
+
+The build-time importer
+(`apps/worker/src/services/java-security/import/rules-importer.ts`,
+`scripts/import-java-security-rules.mjs`) can convert upstream models from:
+
+- CodeQL Java library models — https://github.com/github/codeql (MIT)
+- Tai-e taint configuration — https://github.com/pascal-lab/Tai-e (Apache-2.0)
+- Find Security Bugs — https://github.com/find-sec-bugs/find-sec-bugs (LGPL-3.0)
+
+Imported rules are advisory until reviewed. Any imported rule that is committed
+must have its upstream commit and license locked in the rule's `origin`, and
+only redistributable rule text may be committed; unfamiliar or restricted
+material must be represented by reference only. No upstream model text ships in
+this repository by default.

@@ -1,0 +1,4843 @@
+{
+  "schemaVersion": 1,
+  "ruleVersion": "2026.11.1",
+  "generatedAt": "2026-11-19",
+  "rules": [
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getParameter",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getParameter"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getParameter returns attacker-controlled parameter value; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getParameter",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getParameterValues",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getParameterValues"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getParameterValues returns attacker-controlled parameter values; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getParameterValues",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getParameterMap",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getParameterMap"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getParameterMap returns attacker-controlled parameter map; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getParameterMap",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getParameterNames",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getParameterNames"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getParameterNames returns attacker-controlled parameter names; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getParameterNames",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getHeader",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getHeader"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getHeader returns attacker-controlled header value; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getHeader",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getHeaders",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getHeaders"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getHeaders returns attacker-controlled header values; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getHeaders",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getHeaderNames",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getHeaderNames"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getHeaderNames returns attacker-controlled header names; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getHeaderNames",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getQueryString",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getQueryString"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getQueryString returns attacker-controlled raw query string; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getQueryString",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getCookies",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getCookies"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getCookies returns attacker-controlled cookies; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getCookies",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getInputStream",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getInputStream"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getInputStream returns attacker-controlled request body stream; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getInputStream",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getReader",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getReader"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getReader returns attacker-controlled request body reader; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getReader",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getRequestURI",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getRequestURI"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getRequestURI returns attacker-controlled request URI; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getRequestURI",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getRequestURL",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getRequestURL"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getRequestURL returns attacker-controlled request URL; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getRequestURL",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getPathInfo",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getPathInfo"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "javax.servlet.http.HttpServletRequest.getPathInfo returns attacker-controlled path info; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getPathInfo",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getParameter",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getParameter"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getParameter returns attacker-controlled parameter value; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getParameter",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getParameterValues",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getParameterValues"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getParameterValues returns attacker-controlled parameter values; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getParameterValues",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getParameterMap",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getParameterMap"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getParameterMap returns attacker-controlled parameter map; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getParameterMap",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getParameterNames",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getParameterNames"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getParameterNames returns attacker-controlled parameter names; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getParameterNames",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getHeader",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getHeader"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getHeader returns attacker-controlled header value; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getHeader",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getHeaders",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getHeaders"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getHeaders returns attacker-controlled header values; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getHeaders",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getHeaderNames",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getHeaderNames"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getHeaderNames returns attacker-controlled header names; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getHeaderNames",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getQueryString",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getQueryString"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getQueryString returns attacker-controlled raw query string; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getQueryString",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getCookies",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getCookies"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getCookies returns attacker-controlled cookies; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getCookies",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getInputStream",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getInputStream"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getInputStream returns attacker-controlled request body stream; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getInputStream",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getReader",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getReader"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getReader returns attacker-controlled request body reader; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getReader",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getRequestURI",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getRequestURI"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getRequestURI returns attacker-controlled request URI; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getRequestURI",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getRequestURL",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getRequestURL"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getRequestURL returns attacker-controlled request URL; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getRequestURL",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getPathInfo",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getPathInfo"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "jakarta.servlet.http.HttpServletRequest.getPathInfo returns attacker-controlled path info; the fixed key/argument is not the input",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:jakarta.servlet.http.HttpServletRequest.getPathInfo",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_request:javax.servlet.http.HttpServletRequest.getHeader.ssrf",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["ssrf"],
+      "category": "http_request",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getHeader"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Header value can be used as an outbound request target (SSRF); retained regardless of fixed key",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_request:javax.servlet.http.HttpServletRequest.getHeader.ssrf",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:env_source:java.lang.System.getenv",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "ssrf"],
+      "category": "env_source",
+      "match": {
+        "kind": "method_call",
+        "package": "java.lang",
+        "class": "System",
+        "method": "getenv"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Environment values are runtime inputs; a literal variable name does not make the value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:env_source:java.lang.System.getenv",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:env_source:java.lang.System.getProperty",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "ssrf"],
+      "category": "env_source",
+      "match": {
+        "kind": "method_call",
+        "package": "java.lang",
+        "class": "System",
+        "method": "getProperty"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "System properties are runtime inputs; a fixed key does not make the value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:env_source:java.lang.System.getProperty",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:spring_binding:spring.RequestParam",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "spring_binding",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "RequestParam",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@RequestParam marks request parameter binding; a fixed parameter name cannot make the bound value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:spring_binding:spring.RequestParam",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:spring_binding:spring.RequestBody",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "spring_binding",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "RequestBody",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@RequestBody marks request body binding; a fixed parameter name cannot make the bound value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:spring_binding:spring.RequestBody",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:spring_binding:spring.RequestHeader",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "spring_binding",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "RequestHeader",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@RequestHeader marks request header binding; a fixed parameter name cannot make the bound value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:spring_binding:spring.RequestHeader",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:spring_binding:spring.CookieValue",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "spring_binding",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "CookieValue",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@CookieValue marks cookie value binding; a fixed parameter name cannot make the bound value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:spring_binding:spring.CookieValue",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:spring_binding:spring.PathVariable",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "spring_binding",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PathVariable",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@PathVariable marks path variable binding; a fixed parameter name cannot make the bound value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:spring_binding:spring.PathVariable",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:spring_binding:spring.RequestPart",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "spring_binding",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "RequestPart",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@RequestPart marks multipart part binding; a fixed parameter name cannot make the bound value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:spring_binding:spring.RequestPart",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:spring_binding:spring.ModelAttribute",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "spring_binding",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "ModelAttribute",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@ModelAttribute marks model attribute binding; a fixed parameter name cannot make the bound value constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:spring_binding:spring.ModelAttribute",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.Statement.execute.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "Statement",
+        "method": "execute",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL execute with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.Statement.execute.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.Statement.executeQuery.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "Statement",
+        "method": "executeQuery",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeQuery with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.Statement.executeQuery.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.Statement.executeUpdate.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "Statement",
+        "method": "executeUpdate",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeUpdate with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.Statement.executeUpdate.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.Statement.executeLargeUpdate.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "Statement",
+        "method": "executeLargeUpdate",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeLargeUpdate with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.Statement.executeLargeUpdate.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.Statement.addBatch.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "Statement",
+        "method": "addBatch",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL addBatch with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.Statement.addBatch.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.PreparedStatement.execute.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "PreparedStatement",
+        "method": "execute",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL execute with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.PreparedStatement.execute.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.PreparedStatement.executeQuery.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "PreparedStatement",
+        "method": "executeQuery",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeQuery with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.PreparedStatement.executeQuery.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.PreparedStatement.executeUpdate.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "PreparedStatement",
+        "method": "executeUpdate",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeUpdate with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.PreparedStatement.executeUpdate.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.PreparedStatement.executeLargeUpdate.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "PreparedStatement",
+        "method": "executeLargeUpdate",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeLargeUpdate with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.PreparedStatement.executeLargeUpdate.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.PreparedStatement.addBatch.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "PreparedStatement",
+        "method": "addBatch",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL addBatch with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.PreparedStatement.addBatch.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.CallableStatement.execute.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "CallableStatement",
+        "method": "execute",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL execute with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.CallableStatement.execute.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.CallableStatement.executeQuery.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "CallableStatement",
+        "method": "executeQuery",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeQuery with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.CallableStatement.executeQuery.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.CallableStatement.executeUpdate.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "CallableStatement",
+        "method": "executeUpdate",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeUpdate with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.CallableStatement.executeUpdate.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.CallableStatement.executeLargeUpdate.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "CallableStatement",
+        "method": "executeLargeUpdate",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL executeLargeUpdate with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.CallableStatement.executeLargeUpdate.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:java.sql.CallableStatement.addBatch.1",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "java.sql",
+        "class": "CallableStatement",
+        "method": "addBatch",
+        "arity": 1
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "SQL addBatch with the statement text as argument 0; only a fully constant statement is excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:java.sql.CallableStatement.addBatch.1",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:javax.persistence.EntityManager.createQuery",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.persistence",
+        "class": "EntityManager",
+        "method": "createQuery"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JPA createQuery query text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:javax.persistence.EntityManager.createQuery",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:javax.persistence.EntityManager.createNativeQuery",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.persistence",
+        "class": "EntityManager",
+        "method": "createNativeQuery"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JPA createNativeQuery query text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:javax.persistence.EntityManager.createNativeQuery",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:jakarta.persistence.EntityManager.createQuery",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.persistence",
+        "class": "EntityManager",
+        "method": "createQuery"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JPA createQuery query text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:jakarta.persistence.EntityManager.createQuery",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:jakarta.persistence.EntityManager.createNativeQuery",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.persistence",
+        "class": "EntityManager",
+        "method": "createNativeQuery"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JPA createNativeQuery query text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:jakarta.persistence.EntityManager.createNativeQuery",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.hibernate.Session.createQuery",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.hibernate",
+        "class": "Session",
+        "method": "createQuery"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Hibernate HQL query text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.hibernate.Session.createQuery",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.hibernate.Session.createSQLQuery",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.hibernate",
+        "class": "Session",
+        "method": "createSQLQuery"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Hibernate native SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.hibernate.Session.createSQLQuery",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.query",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.jdbc.core",
+        "class": "JdbcTemplate",
+        "method": "query"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JdbcTemplate.query SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.query",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.queryForObject",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.jdbc.core",
+        "class": "JdbcTemplate",
+        "method": "queryForObject"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JdbcTemplate.queryForObject SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.queryForObject",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.queryForList",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.jdbc.core",
+        "class": "JdbcTemplate",
+        "method": "queryForList"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JdbcTemplate.queryForList SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.queryForList",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.queryForMap",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.jdbc.core",
+        "class": "JdbcTemplate",
+        "method": "queryForMap"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JdbcTemplate.queryForMap SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.queryForMap",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.queryForRowSet",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.jdbc.core",
+        "class": "JdbcTemplate",
+        "method": "queryForRowSet"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JdbcTemplate.queryForRowSet SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.queryForRowSet",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.update",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.jdbc.core",
+        "class": "JdbcTemplate",
+        "method": "update"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JdbcTemplate.update SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.update",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.batchUpdate",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.jdbc.core",
+        "class": "JdbcTemplate",
+        "method": "batchUpdate"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JdbcTemplate.batchUpdate SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.batchUpdate",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.execute",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "sql",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.jdbc.core",
+        "class": "JdbcTemplate",
+        "method": "execute"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JdbcTemplate.execute SQL text as argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:sql:org.springframework.jdbc.core.JdbcTemplate.execute",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:command:java.lang.Runtime.exec",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "command",
+      "match": {
+        "kind": "method_call",
+        "package": "java.lang",
+        "class": "Runtime",
+        "method": "exec"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Process command; a fixed executable with dynamic arguments is still dangerous",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:command:java.lang.Runtime.exec",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:command:java.lang.ProcessBuilder.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "command",
+      "match": {
+        "kind": "constructor",
+        "package": "java.lang",
+        "class": "ProcessBuilder"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "ProcessBuilder command assembled at construction; start() alone carries no arguments",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:command:java.lang.ProcessBuilder.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:command:java.lang.ProcessBuilder.command",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "command",
+      "match": {
+        "kind": "method_call",
+        "package": "java.lang",
+        "class": "ProcessBuilder",
+        "method": "command"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "ProcessBuilder.command sets the command line",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:command:java.lang.ProcessBuilder.command",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:java.net.URL.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "constructor",
+        "package": "java.net",
+        "class": "URL"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "URL target as constructor argument 0",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:java.net.URL.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:java.net.URL.openConnection",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "java.net",
+        "class": "URL",
+        "method": "openConnection"
+      },
+      "sensitive": {
+        "target": "receiver"
+      },
+      "constant_filter": "never",
+      "reason": "URL.openConnection opens an outbound connection to the URL receiver",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:java.net.URL.openConnection",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:java.net.URL.openStream",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "java.net",
+        "class": "URL",
+        "method": "openStream"
+      },
+      "sensitive": {
+        "target": "receiver"
+      },
+      "constant_filter": "never",
+      "reason": "URL.openStream opens an outbound connection to the URL receiver",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:java.net.URL.openStream",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:java.net.http.HttpRequest.Builder.uri",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "java.net.http",
+        "class": "HttpRequest.Builder",
+        "method": "uri"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "JDK HttpClient request URI",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:java.net.http.HttpRequest.Builder.uri",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:java.net.http.HttpClient.send",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "java.net.http",
+        "class": "HttpClient",
+        "method": "send"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "JDK HttpClient.send target URI comes from the request object; not constant-filtered",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:java.net.http.HttpClient.send",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.getForObject",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "getForObject"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.getForObject URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.getForObject",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.getForEntity",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "getForEntity"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.getForEntity URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.getForEntity",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.postForObject",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "postForObject"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.postForObject URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.postForObject",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.postForEntity",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "postForEntity"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.postForEntity URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.postForEntity",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.put",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "put"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.put URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.put",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.delete",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "delete"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.delete URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.delete",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.patchForObject",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "patchForObject"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.patchForObject URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.patchForObject",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.exchange",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "exchange"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.exchange URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.exchange",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.headForHeaders",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "headForHeaders"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.headForHeaders URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.headForHeaders",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.client.RestTemplate.optionsForAllow",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.client",
+        "class": "RestTemplate",
+        "method": "optionsForAllow"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "RestTemplate.optionsForAllow URL as argument 0; a fixed host does not make the path constant",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.client.RestTemplate.optionsForAllow",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.springframework.web.reactive.function.client.WebClient.uri",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.web.reactive.function.client",
+        "class": "WebClient",
+        "method": "uri"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "WebClient URI",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.springframework.web.reactive.function.client.WebClient.uri",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:okhttp3.Request.Builder.url",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "okhttp3",
+        "class": "Request.Builder",
+        "method": "url"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "OkHttp request URL",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:okhttp3.Request.Builder.url",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.apache.http.client.methods.HttpGet.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "constructor",
+        "package": "org.apache.http.client.methods",
+        "class": "HttpGet"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Apache HttpClient HttpGet URI at construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.apache.http.client.methods.HttpGet.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.apache.http.client.methods.HttpPost.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "constructor",
+        "package": "org.apache.http.client.methods",
+        "class": "HttpPost"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Apache HttpClient HttpPost URI at construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.apache.http.client.methods.HttpPost.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.apache.http.client.methods.HttpPut.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "constructor",
+        "package": "org.apache.http.client.methods",
+        "class": "HttpPut"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Apache HttpClient HttpPut URI at construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.apache.http.client.methods.HttpPut.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.apache.http.client.methods.HttpDelete.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "constructor",
+        "package": "org.apache.http.client.methods",
+        "class": "HttpDelete"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Apache HttpClient HttpDelete URI at construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.apache.http.client.methods.HttpDelete.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.apache.http.client.methods.HttpHead.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "constructor",
+        "package": "org.apache.http.client.methods",
+        "class": "HttpHead"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Apache HttpClient HttpHead URI at construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.apache.http.client.methods.HttpHead.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.apache.http.client.methods.HttpOptions.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "constructor",
+        "package": "org.apache.http.client.methods",
+        "class": "HttpOptions"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Apache HttpClient HttpOptions URI at construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.apache.http.client.methods.HttpOptions.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.apache.http.client.methods.HttpPatch.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "constructor",
+        "package": "org.apache.http.client.methods",
+        "class": "HttpPatch"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Apache HttpClient HttpPatch URI at construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.apache.http.client.methods.HttpPatch.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:url_request:org.apache.http.impl.client.CloseableHttpClient.execute",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["ssrf"],
+      "category": "url_request",
+      "match": {
+        "kind": "method_call",
+        "package": "org.apache.http.impl.client",
+        "class": "CloseableHttpClient",
+        "method": "execute"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "Apache HttpClient.execute target request object",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:url_request:org.apache.http.impl.client.CloseableHttpClient.execute",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.io.File.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "constructor",
+        "package": "java.io",
+        "class": "File"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path at File construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.io.File.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.nio.file.Paths.get",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "method_call",
+        "package": "java.nio.file",
+        "class": "Paths",
+        "method": "get"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path from Paths.get",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.nio.file.Paths.get",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.nio.file.Files.newInputStream",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "method_call",
+        "package": "java.nio.file",
+        "class": "Files",
+        "method": "newInputStream"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path argument to Files.newInputStream",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.nio.file.Files.newInputStream",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.nio.file.Files.newOutputStream",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "method_call",
+        "package": "java.nio.file",
+        "class": "Files",
+        "method": "newOutputStream"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path argument to Files.newOutputStream",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.nio.file.Files.newOutputStream",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.nio.file.Files.newBufferedReader",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "method_call",
+        "package": "java.nio.file",
+        "class": "Files",
+        "method": "newBufferedReader"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path argument to Files.newBufferedReader",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.nio.file.Files.newBufferedReader",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.nio.file.Files.newBufferedWriter",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "method_call",
+        "package": "java.nio.file",
+        "class": "Files",
+        "method": "newBufferedWriter"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path argument to Files.newBufferedWriter",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.nio.file.Files.newBufferedWriter",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.nio.file.Files.readAllBytes",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "method_call",
+        "package": "java.nio.file",
+        "class": "Files",
+        "method": "readAllBytes"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path argument to Files.readAllBytes",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.nio.file.Files.readAllBytes",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.nio.file.Files.readString",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "method_call",
+        "package": "java.nio.file",
+        "class": "Files",
+        "method": "readString"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path argument to Files.readString",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.nio.file.Files.readString",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.nio.file.Files.writeString",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "method_call",
+        "package": "java.nio.file",
+        "class": "Files",
+        "method": "writeString"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path argument to Files.writeString",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.nio.file.Files.writeString",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:path:java.io.FileInputStream.ctor",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["injection"],
+      "category": "path",
+      "match": {
+        "kind": "constructor",
+        "package": "java.io",
+        "class": "FileInputStream"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Filesystem path at FileInputStream construction",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:path:java.io.FileInputStream.ctor",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.PrintWriter.print",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "PrintWriter",
+        "method": "print"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via PrintWriter.print; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.PrintWriter.print",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.PrintWriter.println",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "PrintWriter",
+        "method": "println"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via PrintWriter.println; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.PrintWriter.println",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.PrintWriter.write",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "PrintWriter",
+        "method": "write"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via PrintWriter.write; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.PrintWriter.write",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.PrintWriter.append",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "PrintWriter",
+        "method": "append"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via PrintWriter.append; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.PrintWriter.append",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.PrintWriter.format",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "PrintWriter",
+        "method": "format"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via PrintWriter.format; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.PrintWriter.format",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.PrintWriter.printf",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "PrintWriter",
+        "method": "printf"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via PrintWriter.printf; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.PrintWriter.printf",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.Writer.print",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "Writer",
+        "method": "print"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via Writer.print; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.Writer.print",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.Writer.println",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "Writer",
+        "method": "println"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via Writer.println; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.Writer.println",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.Writer.write",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "Writer",
+        "method": "write"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via Writer.write; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.Writer.write",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.Writer.append",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "Writer",
+        "method": "append"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via Writer.append; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.Writer.append",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.Writer.format",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "Writer",
+        "method": "format"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via Writer.format; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.Writer.format",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:java.io.Writer.printf",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "java.io",
+        "class": "Writer",
+        "method": "printf"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via Writer.printf; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:java.io.Writer.printf",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:javax.servlet.jsp.JspWriter.print",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.jsp",
+        "class": "JspWriter",
+        "method": "print"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.print; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:javax.servlet.jsp.JspWriter.print",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:javax.servlet.jsp.JspWriter.println",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.jsp",
+        "class": "JspWriter",
+        "method": "println"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.println; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:javax.servlet.jsp.JspWriter.println",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:javax.servlet.jsp.JspWriter.write",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.jsp",
+        "class": "JspWriter",
+        "method": "write"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.write; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:javax.servlet.jsp.JspWriter.write",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:javax.servlet.jsp.JspWriter.append",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.jsp",
+        "class": "JspWriter",
+        "method": "append"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.append; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:javax.servlet.jsp.JspWriter.append",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:javax.servlet.jsp.JspWriter.format",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.jsp",
+        "class": "JspWriter",
+        "method": "format"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.format; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:javax.servlet.jsp.JspWriter.format",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:javax.servlet.jsp.JspWriter.printf",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.jsp",
+        "class": "JspWriter",
+        "method": "printf"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.printf; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:javax.servlet.jsp.JspWriter.printf",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.print",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.jsp",
+        "class": "JspWriter",
+        "method": "print"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.print; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.print",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.println",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.jsp",
+        "class": "JspWriter",
+        "method": "println"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.println; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.println",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.write",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.jsp",
+        "class": "JspWriter",
+        "method": "write"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.write; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.write",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.append",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.jsp",
+        "class": "JspWriter",
+        "method": "append"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.append; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.append",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.format",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.jsp",
+        "class": "JspWriter",
+        "method": "format"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.format; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.format",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.printf",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "jakarta.servlet.jsp",
+        "class": "JspWriter",
+        "method": "printf"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "proven_constant_only",
+      "reason": "Response body write via JspWriter.printf; fixed markup-only output may be excluded",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:jakarta.servlet.jsp.JspWriter.printf",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:org.springframework.ui.Model.addAttribute",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.ui",
+        "class": "Model",
+        "method": "addAttribute"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Model attribute rendered by the view; not constant-filtered",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:org.springframework.ui.Model.addAttribute",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:xss_output:org.springframework.ui.ModelMap.addAttribute",
+      "language": "java",
+      "role": "sink",
+      "vulnerability_types": ["xss"],
+      "category": "xss_output",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.ui",
+        "class": "ModelMap",
+        "method": "addAttribute"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Model attribute rendered by the view; not constant-filtered",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:xss_output:org.springframework.ui.ModelMap.addAttribute",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:format:java.lang.String.format",
+      "language": "java",
+      "role": "transform",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "format",
+      "match": {
+        "kind": "method_call",
+        "package": "java.lang",
+        "class": "String",
+        "method": "format"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "format_aware",
+      "reason": "String.format result; excluded only when the format string references no dynamic argument",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:format:java.lang.String.format",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:format:java.util.Formatter.format",
+      "language": "java",
+      "role": "transform",
+      "vulnerability_types": ["injection", "xss"],
+      "category": "format",
+      "match": {
+        "kind": "method_call",
+        "package": "java.util",
+        "class": "Formatter",
+        "method": "format"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "format_aware",
+      "reason": "Formatter.format result; excluded only when no dynamic output argument is referenced",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:format:java.util.Formatter.format",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:auth_source:javax.servlet.http.HttpServletRequest.getUserPrincipal",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["auth"],
+      "category": "auth_source",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getUserPrincipal"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Authenticated principal from the request",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:auth_source:javax.servlet.http.HttpServletRequest.getUserPrincipal",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:auth_source:javax.servlet.http.HttpServletRequest.getRemoteUser",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["auth"],
+      "category": "auth_source",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "getRemoteUser"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Remote user identity from the request",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:auth_source:javax.servlet.http.HttpServletRequest.getRemoteUser",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:auth_source:org.springframework.security.core.context.SecurityContextHolder.getContext",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["auth", "authz"],
+      "category": "auth_source",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.security.core.context",
+        "class": "SecurityContextHolder",
+        "method": "getContext"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Current security context; principal/authorities are runtime values",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:auth_source:org.springframework.security.core.context.SecurityContextHolder.getContext",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:auth_source:org.springframework.security.core.Authentication.authenticate",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["auth"],
+      "category": "auth_source",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.security.core",
+        "class": "Authentication",
+        "method": "authenticate"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Authentication.authenticate runtime authentication data",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:auth_source:org.springframework.security.core.Authentication.authenticate",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:auth_source:org.springframework.security.core.Authentication.getPrincipal",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["auth"],
+      "category": "auth_source",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.security.core",
+        "class": "Authentication",
+        "method": "getPrincipal"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Authentication.getPrincipal runtime authentication data",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:auth_source:org.springframework.security.core.Authentication.getPrincipal",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:auth_source:org.springframework.security.core.Authentication.getAuthorities",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["auth"],
+      "category": "auth_source",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.security.core",
+        "class": "Authentication",
+        "method": "getAuthorities"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Authentication.getAuthorities runtime authentication data",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:auth_source:org.springframework.security.core.Authentication.getAuthorities",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:auth_source:org.springframework.security.core.Authentication.isAuthenticated",
+      "language": "java",
+      "role": "source",
+      "vulnerability_types": ["auth"],
+      "category": "auth_source",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.security.core",
+        "class": "Authentication",
+        "method": "isAuthenticated"
+      },
+      "sensitive": {
+        "target": "return"
+      },
+      "constant_filter": "never",
+      "reason": "Authentication.isAuthenticated runtime authentication data",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:auth_source:org.springframework.security.core.Authentication.isAuthenticated",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:auth_boundary:org.springframework.security.authentication.AuthenticationManager.authenticate",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["auth"],
+      "category": "auth_boundary",
+      "match": {
+        "kind": "method_call",
+        "package": "org.springframework.security.authentication",
+        "class": "AuthenticationManager",
+        "method": "authenticate"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "Authentication entry boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:auth_boundary:org.springframework.security.authentication.AuthenticationManager.authenticate",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:javax.servlet.http.HttpServletRequest.isUserInRole",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "package": "javax.servlet.http",
+        "class": "HttpServletRequest",
+        "method": "isUserInRole"
+      },
+      "sensitive": {
+        "target": "argument",
+        "indexes": [0]
+      },
+      "constant_filter": "never",
+      "reason": "Role check; the literal role name is itself the important authorization clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:javax.servlet.http.HttpServletRequest.isUserInRole",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.hasRole",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "hasRole"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule hasRole(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.hasRole",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.hasAnyRole",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "hasAnyRole"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule hasAnyRole(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.hasAnyRole",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.hasAuthority",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "hasAuthority"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule hasAuthority(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.hasAuthority",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.hasAnyAuthority",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "hasAnyAuthority"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule hasAnyAuthority(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.hasAnyAuthority",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.permitAll",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "permitAll"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule permitAll(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.permitAll",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.denyAll",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "denyAll"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule denyAll(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.denyAll",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.authenticated",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "authenticated"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule authenticated(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.authenticated",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.fullyAuthenticated",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "fullyAuthenticated"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule fullyAuthenticated(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.fullyAuthenticated",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.anonymous",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "anonymous"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule anonymous(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.anonymous",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.rememberMe",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "rememberMe"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule rememberMe(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.rememberMe",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security.access",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "method_call",
+        "method": "access"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security access rule access(...); a fixed role/authority is a meaningful boundary clue",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security.access",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.authorizeRequests",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "authorizeRequests"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call authorizeRequests(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.authorizeRequests",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.authorizeHttpRequests",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "authorizeHttpRequests"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call authorizeHttpRequests(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.authorizeHttpRequests",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.antMatchers",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "antMatchers"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call antMatchers(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.antMatchers",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.requestMatchers",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "requestMatchers"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call requestMatchers(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.requestMatchers",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.anyRequest",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "anyRequest"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call anyRequest(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.anyRequest",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.mvcMatchers",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "mvcMatchers"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call mvcMatchers(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.mvcMatchers",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.regexMatchers",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "regexMatchers"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call regexMatchers(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.regexMatchers",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.csrf",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "csrf"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call csrf(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.csrf",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_config:spring-security-config.cors",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_config",
+      "match": {
+        "kind": "method_call",
+        "method": "cors"
+      },
+      "sensitive": {
+        "target": "argument"
+      },
+      "constant_filter": "never",
+      "reason": "Spring Security configuration call cors(...)",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_config:spring-security-config.cors",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.prepost.PreAuthorize",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PreAuthorize",
+        "package": "org.springframework.security.access.prepost"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@PreAuthorize authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.prepost.PreAuthorize",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.prepost.PostAuthorize",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PostAuthorize",
+        "package": "org.springframework.security.access.prepost"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@PostAuthorize authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.prepost.PostAuthorize",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.prepost.PreFilter",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PreFilter",
+        "package": "org.springframework.security.access.prepost"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@PreFilter authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.prepost.PreFilter",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.prepost.PostFilter",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PostFilter",
+        "package": "org.springframework.security.access.prepost"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@PostFilter authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.prepost.PostFilter",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.annotation.Secured",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "Secured",
+        "package": "org.springframework.security.access.annotation"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@Secured authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.org.springframework.security.access.annotation.Secured",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.javax.annotation.security.RolesAllowed",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "RolesAllowed",
+        "package": "javax.annotation.security"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@RolesAllowed authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.javax.annotation.security.RolesAllowed",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.javax.annotation.security.PermitAll",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PermitAll",
+        "package": "javax.annotation.security"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@PermitAll authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.javax.annotation.security.PermitAll",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.javax.annotation.security.DenyAll",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "DenyAll",
+        "package": "javax.annotation.security"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@DenyAll authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.javax.annotation.security.DenyAll",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:authz_check:spring-security-annotation.jakarta.annotation.security.RolesAllowed",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz"],
+      "category": "authz_check",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "RolesAllowed",
+        "package": "jakarta.annotation.security"
+      },
+      "sensitive": {
+        "target": "annotation"
+      },
+      "constant_filter": "never",
+      "reason": "@RolesAllowed authorization annotation",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:authz_check:spring-security-annotation.jakarta.annotation.security.RolesAllowed",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_route:spring-route.RequestMapping",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz", "auth"],
+      "category": "http_route",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "RequestMapping",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "@RequestMapping declares a network-reachable route/controller boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_route:spring-route.RequestMapping",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_route:spring-route.GetMapping",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz", "auth"],
+      "category": "http_route",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "GetMapping",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "@GetMapping declares a network-reachable route/controller boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_route:spring-route.GetMapping",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_route:spring-route.PostMapping",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz", "auth"],
+      "category": "http_route",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PostMapping",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "@PostMapping declares a network-reachable route/controller boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_route:spring-route.PostMapping",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_route:spring-route.PutMapping",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz", "auth"],
+      "category": "http_route",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PutMapping",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "@PutMapping declares a network-reachable route/controller boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_route:spring-route.PutMapping",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_route:spring-route.DeleteMapping",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz", "auth"],
+      "category": "http_route",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "DeleteMapping",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "@DeleteMapping declares a network-reachable route/controller boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_route:spring-route.DeleteMapping",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_route:spring-route.PatchMapping",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz", "auth"],
+      "category": "http_route",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "PatchMapping",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "@PatchMapping declares a network-reachable route/controller boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_route:spring-route.PatchMapping",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_route:spring-route.Controller",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz", "auth"],
+      "category": "http_route",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "Controller",
+        "package": "org.springframework.stereotype"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "@Controller declares a network-reachable route/controller boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_route:spring-route.Controller",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    },
+    {
+      "id": "shannon:http_route:spring-route.RestController",
+      "language": "java",
+      "role": "security_boundary",
+      "vulnerability_types": ["authz", "auth"],
+      "category": "http_route",
+      "match": {
+        "kind": "annotation",
+        "annotation_name": "RestController",
+        "package": "org.springframework.web.bind.annotation"
+      },
+      "sensitive": {
+        "target": "none"
+      },
+      "constant_filter": "never",
+      "reason": "@RestController declares a network-reachable route/controller boundary",
+      "origin": [
+        {
+          "repository": "shannon:curated",
+          "commit": "local",
+          "file": "apps/worker/src/services/java-security/data/java-security-rules.json",
+          "original_rule": "shannon:http_route:spring-route.RestController",
+          "license": "AGPL-3.0-or-later"
+        }
+      ]
+    }
+  ]
+}

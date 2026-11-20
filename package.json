@@ -13,6 +13,8 @@
     "test:explore-clone": "node scripts/test-explore-clone-search.mjs",
     "test:explore-ast": "node scripts/test-explore-ast-clone-search.mjs",
     "test:explore-ast-activity": "node scripts/test-explore-ast-activity.mjs",
+    "test:java-security": "node scripts/test-java-security-candidates.mjs",
+    "test:java-security-importer": "node scripts/test-java-security-importer.mjs",
     "temporal:worker": "node apps/worker/dist/temporal/worker.js",
     "temporal:start": "node apps/worker/dist/temporal/worker.js"
   },

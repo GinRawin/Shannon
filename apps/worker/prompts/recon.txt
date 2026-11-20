@@ -74,6 +74,7 @@ A component is **out-of-scope** if it **cannot** be invoked through the running 
 <cli_tools>
 Please use these tools for the following use cases:
 - `task` tool: **MANDATORY for ALL source code analysis.** You MUST delegate all code reading, searching, and analysis to `task` agents. DO NOT use `read`, `glob`, or `grep` tools for source code.
+- `find_security_candidates` (Java navigation aid, optional): You may reuse this read-only tool on Java repositories to revisit or refine source/sink locations found during Pre-Recon. Prefer targeted queries relevant to observed routes and behaviors; verify network reachability through the existing recon process. Static candidates do not establish reachability or a vulnerability.
 - **Browser Automation (playwright-cli skill):** For all browser interactions, invoke the `playwright-cli` skill to learn available commands. Always pass `-s={{PLAYWRIGHT_SESSION}}` to every command for session isolation.
 - **`bash` tool:** Use for creating directories, copying files, and other shell commands as needed.
 

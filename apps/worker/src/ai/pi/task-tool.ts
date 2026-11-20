@@ -40,6 +40,8 @@ export interface TaskToolContext {
   readonly createResourceLoader: () => Promise<ResourceLoader>;
   /** Children can capture their own validation; only the parent submits verdicts. */
   readonly httpEvidenceTools?: ToolDefinition[] | undefined;
+  /** Read-only navigation aids (e.g. find_security_candidates) exposed to children. */
+  readonly securityCandidateTools?: ToolDefinition[] | undefined;
   readonly parentAgentName: LoggableAgentName;
   readonly workflowLogPath?: string | undefined;
   readonly onDelegationStart?: ((child: string) => Promise<void>) | undefined;
@@ -172,6 +174,8 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
       };
       const onCancellation = (): void => abortChildSession();
 
+      const extra = [...(config.httpEvidenceTools ?? []), ...(config.securityCandidateTools ?? [])];
+
       try {
         const resourceLoader = await config.createResourceLoader();
         ({ session: subSession } = await createAgentSession({
@@ -179,8 +183,8 @@ export function createTaskTool(config: TaskToolContext): ToolDefinition {
           agentDir,
           resourceLoader,
           model: config.model,
-          tools: [...CHILD_TOOLS, ...(config.httpEvidenceTools ?? []).map((tool) => tool.name)],
-          customTools: config.httpEvidenceTools ?? [],
+          tools: [...CHILD_TOOLS, ...extra.map((tool) => tool.name)],
+          customTools: extra,
           modelRuntime: config.modelRuntime,
           sessionManager: SessionManager.inMemory(config.cwd),
           settingsManager: SettingsManager.inMemory({

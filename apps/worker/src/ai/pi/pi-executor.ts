@@ -28,6 +28,7 @@ import type { AuditSession } from '../../audit/index.js';
 import { isLoggableAgentName, type SafeErrorDetails, safeErrorFromUnknown } from '../../audit/safe-fields.js';
 import { BASH_TIMEOUT_EXTENSION_DIR, deliverablesDir } from '../../paths.js';
 import { isRetryableFailure, PentestError } from '../../services/error-handling.js';
+import { loadSecurityCandidatesConfig } from '../../services/java-security/cache.js';
 import { AGENT_VALIDATORS } from '../../session-manager.js';
 import type { ActivityLogger } from '../../types/activity-logger.js';
 import { isBrowserAgent } from '../../utils/browser-agents.js';
@@ -46,6 +47,7 @@ import { createProgressManager } from '../progress-manager.js';
 import type { CapturedSubmitTool } from '../submit-tool.js';
 import { permissionSystemConfigExists, permissionSystemPackageDir } from './permission-system.js';
 import { PI_RETRY_SETTINGS } from './retry-settings.js';
+import { createSecurityCandidatesTool, isSecurityCandidatesAgent } from './security-candidates-tool.js';
 import { createGlobTool, createTodoWriteTool } from './session-tools.js';
 import { createTaskTool } from './task-tool.js';
 import { TraceEmitter } from './trace-emitter.js';
@@ -301,6 +303,13 @@ export async function runPiPrompt(
   // Accumulates usage from in-process `task` child sessions so the parent's reported
   // cost includes sub-agent spend (their getSessionStats is separate from ours).
   const childUsage: ChildUsage = { cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  // The Java candidate retriever is registered only for the Pre-Recon/Recon stages, and only while
+  // the feature is enabled. The check uses the actual agent name, not the log-safe fallback, so the
+  // tool is never exposed to the vulnerability-analysis or exploitation agents.
+  const securityCandidateTools: ToolDefinition[] =
+    isSecurityCandidatesAgent(agentName) && loadSecurityCandidatesConfig().enabled
+      ? [createSecurityCandidatesTool(sourceDir)]
+      : [];
   let pendingError: PentestError | null = null;
   // Parent failures remain terminal; child failures can be resolved by an explicit successful retry.
   let pendingProviderDetails: SafeProviderTurnDetails | null = null;
@@ -310,6 +319,7 @@ export async function runPiPrompt(
       httpEvidenceTools: callerTools?.filter((tool) =>
         ['capture_http_request', 'list_http_evidence', 'verify_http_replay'].includes(tool.name),
       ),
+      ...(securityCandidateTools.length > 0 && { securityCandidateTools }),
       model: selection.model,
       modelRuntime: selection.modelRuntime,
       cwd: sourceDir,
@@ -334,6 +344,7 @@ export async function runPiPrompt(
     }),
     createTodoWriteTool(),
     createGlobTool(sourceDir),
+    ...securityCandidateTools,
     ...(callerTools ?? []),
     ...(submitTool ? [submitTool.tool] : []),
   ];
