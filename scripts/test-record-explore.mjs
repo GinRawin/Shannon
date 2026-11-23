@@ -243,7 +243,12 @@ try {
   await writeFile(path.join(dir, 'injection_exploit_collector_renumbered.json'), JSON.stringify([
     { ...fp, vulnerability_id: 'INJ-01' }, { ...retained, vulnerability_id: 'INJ-02' },
   ]));
-  await writeFile(path.join(dir, 'injection_renumber_map.json'), JSON.stringify({ map: { 'INJ-02': 'INJ-01', 'INJ-03': 'INJ-02' } }));
+  // `order` is the map's own key sequence: a reviewed-out reference has to leave both, or the
+  // committed map stops validating and the report stage's gap-closing compaction refuses the class.
+  await writeFile(path.join(dir, 'injection_renumber_map.json'), JSON.stringify({
+    map: { 'INJ-02': 'INJ-01', 'INJ-03': 'INJ-02' },
+    order: ['INJ-02', 'INJ-03'],
+  }));
   await writeFile(path.join(dir, 'injection_exploitation_queue.json'), JSON.stringify({ vulnerabilities: [{ ID: 'INJ-02' }, { ID: 'INJ-03' }] }));
   await writeFile(path.join(dir, 'record_verification.json'), JSON.stringify([
     { ...baseVerdict, finding_id: 'INJ-02', status: 'failed' },
@@ -256,7 +261,9 @@ try {
   assert.deepEqual(sourceAfterReview.map((entry) => entry.vulnerability_id), ['INJ-03']);
   assert.deepEqual(renumberedAfterReview.map((entry) => entry.vulnerability_id), ['INJ-02']);
   assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'injection_renumber_map.json'), 'utf8')).map, { 'INJ-03': 'INJ-02' });
+  assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'injection_renumber_map.json'), 'utf8')).order, ['INJ-03']);
   assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'record_verified_finding_ids.json'), 'utf8')), ['INJ-02']);
+  console.log('PASS a reviewed-out reference leaves the renumber map key sequence in step with its map');
 } finally {
   await rm(dir, { recursive: true, force: true });
   await rm(outsideSink, { force: true });

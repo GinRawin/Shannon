@@ -241,17 +241,28 @@ export async function applyExploitReviews(
     const mappedFinalIds = new Set<string>();
     const mappedSourceIds = new Set<string>();
     try {
-      const map = JSON.parse(await fs.readFile(mapPath, 'utf8')) as { map?: Record<string, string> };
+      const map = JSON.parse(await fs.readFile(mapPath, 'utf8')) as {
+        map?: Record<string, string>;
+        order?: string[];
+      };
+      const mapping = map.map;
       for (const id of falsePositiveIds) {
-        const reportId = map.map?.[id];
+        const reportId = mapping?.[id];
         if (reportId) {
           removedReportIds.add(reportId);
           mappedSourceIds.add(id);
           mappedFinalIds.add(reportId);
         }
       }
-      if (map.map) {
-        for (const id of falsePositiveIds) delete map.map[id];
+      if (mapping) {
+        for (const id of falsePositiveIds) delete mapping[id];
+        // `order` is nothing but the map's own key sequence, so a reviewed-out reference has to
+        // leave both. A map that still lists a pruned reference in `order` fails the renumber-map
+        // validation the later compaction performs, which then refuses the whole class and leaves
+        // the numbering hole the review just opened unfilled in the report.
+        if (Array.isArray(map.order)) {
+          map.order = map.order.filter((reference) => Object.hasOwn(mapping, reference));
+        }
         await atomicWrite(mapPath, `${JSON.stringify(map, null, 2)}\n`);
       }
     } catch (error) {

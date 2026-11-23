@@ -229,6 +229,26 @@ const REPORT_RENUMBER_FAILURE = 'Report finding identifiers could not be refresh
 const REPORT_COMPACTION_FAILURE = 'Report findings could not be compacted.';
 
 /**
+ * One-line cause for a refused compaction. This path degrades the report instead of failing the run,
+ * so the recorded reason has to name the refusing check itself; a bare constant leaves an operator
+ * unable to tell an artifact disagreement from a defect without re-running the workspace.
+ */
+function describeCompactionFailure(error: unknown): string {
+  if (error !== null && typeof error === 'object') {
+    const details = (error as { details?: unknown }).details;
+    if (details !== null && typeof details === 'object') {
+      const record = details as { checkCode?: unknown; vulnerabilityClass?: unknown };
+      const parts = [record.checkCode, record.vulnerabilityClass].filter(
+        (part): part is string => typeof part === 'string' && part.length > 0,
+      );
+      if (parts.length > 0) return parts.join(' ');
+    }
+  }
+  if (error instanceof Error && error.message.length > 0) return error.message.slice(0, 200);
+  return 'unknown error';
+}
+
+/**
  * The single Capella outcome every vulnerability class joins on. Agentic SAST overlaps the
  * pentest, so its result is settled once and read by all five classes: a usable SARIF, no
  * SARIF, or the original cancellation that every waiter rethrows unchanged.
@@ -1312,7 +1332,10 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
         } catch (error) {
           if (hasCancellationInCauseChain(error)) throw error;
           addPartialReason({ code: 'report_compaction_failed' });
-          addNonFatal({ phase: 'report:compact', error: REPORT_COMPACTION_FAILURE });
+          addNonFatal({
+            phase: 'report:compact',
+            error: `${REPORT_COMPACTION_FAILURE} (${describeCompactionFailure(error)})`,
+          });
         }
       }
       state.reportProgress = await runOperation('report:checkpoint', 'Saving report progress', () =>

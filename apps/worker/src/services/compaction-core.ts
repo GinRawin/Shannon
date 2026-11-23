@@ -95,6 +95,40 @@ function isRenumberMapFile(value: unknown, vulnerabilityClass: ReconciliationCla
   });
 }
 
+/**
+ * `order` carries no information beyond `map`: both writers emit it by walking the one dense-ordered
+ * list they build the map from, so it is always exactly the map's key sequence. A committed map that
+ * lost a key without losing its `order` slot (field workspaces written before Record failure review
+ * pruned both) is therefore a repairable redundancy rather than a real key-set divergence. Repairing
+ * it lets the gap-closing compaction run, which is the pass that removes the numbering hole the
+ * pruned reference left behind; refusing it would strand that hole in a report that is otherwise
+ * complete. The full strict validation still runs on the reconciled map, so a genuinely malformed
+ * map keeps failing.
+ */
+function reconcileRenumberMapOrder(
+  renumberMap: RenumberMapFile,
+  vulnerabilityClass: ReconciliationClass,
+  logger: ActivityLogger,
+): RenumberMapFile {
+  if (!isRecord(renumberMap.map)) return renumberMap;
+  const order = Object.keys(renumberMap.map);
+  const current = renumberMap.order;
+  if (
+    Array.isArray(current) &&
+    current.length === order.length &&
+    current.every((reference, index) => reference === order[index])
+  ) {
+    return renumberMap;
+  }
+  logger.warn('Repaired a renumber map whose order disagreed with its own keys.', {
+    vulnerabilityClass,
+    checkCode: 'compaction-map-order-repaired',
+    mapEntries: order.length,
+    orderEntries: Array.isArray(current) ? current.length : null,
+  });
+  return { ...renumberMap, order };
+}
+
 export function buildClassCompaction(
   vulnerabilityClass: ReconciliationClass,
   keptReferences: readonly string[],
@@ -411,7 +445,7 @@ export async function compactReportFindings(args: {
     const parsedMap = parseJson<RenumberMapFile>(mapRead.contents, 'compaction-map-not-json');
     const renumberMap = registerExpansionReferences(
       vulnerabilityClass,
-      parsedMap,
+      reconcileRenumberMapOrder(parsedMap, vulnerabilityClass, args.logger),
       await readExpansionQueueReferences(args.deliverablesDir, vulnerabilityClass),
     );
     const compaction = buildClassCompaction(vulnerabilityClass, keptReferences, renumberMap);

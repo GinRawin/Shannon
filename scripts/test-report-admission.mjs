@@ -20,7 +20,7 @@ const { loadPacketBackedFindingIds, attachHttpEvidence, writeReproductionScript 
 const { compactReportFindings } = await load('services/compaction-core');
 const { createFindingCollector } = await load('collectors/finding-collector');
 const {
-  aggregateRecordFailures, applyRecordRetryEvidence, finalizeRecordReportAdmission,
+  aggregateRecordFailures, applyExploitReviews, applyRecordRetryEvidence, finalizeRecordReportAdmission,
   loadRecordReportFindingIds, validateRecordReportAdmission, writeFinalRecordFailureAudit,
 } = await load('services/record-verification');
 const { assembleFinalReportWithEvidence } = await load('services/reporting');
@@ -351,3 +351,100 @@ const unqueuedFailure = await compactReportFindings({
 }).then(() => null, (error) => error);
 assert.equal(unqueuedFailure?.details?.checkCode, 'compaction-kept-reference-not-minted');
 console.log('PASS an expansion reference absent from the committed queue is still refused');
+
+// Record failure review prunes a reference from every report-facing artifact. The renumber map it
+// rewrites has to stay self-consistent (`order` is exactly its own key sequence), and compaction has
+// to accept it and close the numbering hole the pruning opened; a map left drifted makes compaction
+// refuse the class, which degrades the whole run's status to partial and strands the hole.
+const reviewDir = `${temporary}/reviewed-drift`;
+await mkdir(reviewDir);
+await run('git', ['init'], { cwd: reviewDir });
+const reviewedEntry = (id) => ({ ...strictEntry(id, strictInjectionReceipt), vulnerability_id: id });
+const reviewFiles = {
+  'auth_exploit_collector.json': [reviewedEntry('AUTH-01'), reviewedEntry('AUTH-19'), reviewedEntry('AUTH-25')],
+  'auth_exploit_collector_renumbered.json': [
+    { ...reviewedEntry('AUTH-01'), vulnerability_id: 'AUTH-01' },
+    { ...reviewedEntry('AUTH-19'), vulnerability_id: 'AUTH-02' },
+    { ...reviewedEntry('AUTH-25'), vulnerability_id: 'AUTH-03' },
+  ],
+  'auth_renumber_map.json': {
+    vulnerability_type: 'auth',
+    map: { 'AUTH-01': 'AUTH-01', 'AUTH-19': 'AUTH-02', 'AUTH-25': 'AUTH-03' },
+    order: ['AUTH-01', 'AUTH-19', 'AUTH-25'],
+    excluded: [],
+  },
+  'auth_exploitation_queue.json': {
+    vulnerabilities: [{ ID: 'AUTH-01' }, { ID: 'AUTH-19' }, { ID: 'AUTH-25' }],
+  },
+  'record_verification.json': ['AUTH-01', 'AUTH-19', 'AUTH-25'].map((id) => strictVerdict(id, strictInjectionReceipt)),
+  'record_verified_finding_ids.json': ['AUTH-01', 'AUTH-02', 'AUTH-03'],
+};
+for (const [name, value] of Object.entries(reviewFiles))
+  await writeFile(path.join(reviewDir, name), `${JSON.stringify(value, null, 2)}\n`);
+await run('git', ['add', '--', '.'], { cwd: reviewDir, env });
+await run('git', ['commit', '-m', 'Record failure review fixtures'], { cwd: reviewDir, env });
+await applyExploitReviews(reviewDir, [
+  { finding_id: 'AUTH-25', verdict: 'false_positive', reason: 'fixture rejects the middle dense reference' },
+]);
+const reviewedMap = JSON.parse(await readFile(path.join(reviewDir, 'auth_renumber_map.json'), 'utf8'));
+assert.deepEqual(reviewedMap.map, { 'AUTH-01': 'AUTH-01', 'AUTH-19': 'AUTH-02' });
+assert.deepEqual(reviewedMap.order, Object.keys(reviewedMap.map));
+await writeFile(path.join(reviewDir, 'report.json'), `${JSON.stringify({
+  report_meta: { target: 'https://fixture.invalid', assessment_date: '2026-11-02', scope: 'Fixture', executive_summary: 'Fixture' },
+  findings: [finding('AUTH-01'), finding('AUTH-02')],
+  reconciliation_failed: [],
+}, null, 2)}\n`);
+await run('git', ['add', '--', '.'], { cwd: reviewDir, env });
+await run('git', ['commit', '-m', 'Reviewed report fixture'], { cwd: reviewDir, env });
+const reviewedCompaction = await compactReportFindings({
+  deliverablesDir: reviewDir, participatingClasses: ['auth'], renumberFailedClasses: [],
+  logger: { info() {}, warn() {}, error() {} },
+});
+assert.equal(reviewedCompaction.skipped, false);
+const reviewedReport = JSON.parse(await readFile(path.join(reviewDir, 'report.json'), 'utf8'));
+assert.deepEqual(reviewedReport.findings.map((item) => item.finding_id), ['AUTH-01', 'AUTH-02']);
+assert.deepEqual(
+  JSON.parse(await readFile(path.join(reviewDir, 'auth_renumber_map.json'), 'utf8')).map,
+  { 'AUTH-01': 'AUTH-01', 'AUTH-19': 'AUTH-02' },
+);
+console.log('PASS a reviewed-out reference leaves the map self-consistent and compaction still closes the hole');
+
+// A workspace already committed with the old drift must still compact: `order` is redundant with the
+// map's keys, so compaction repairs it instead of refusing the class and degrading the run.
+const driftedDir = `${temporary}/legacy-drift`;
+await mkdir(driftedDir);
+await run('git', ['init'], { cwd: driftedDir });
+const driftedFiles = {
+  ...reviewFiles,
+  'auth_renumber_map.json': {
+    vulnerability_type: 'auth',
+    map: { 'AUTH-01': 'AUTH-01', 'AUTH-19': 'AUTH-02' },
+    order: ['AUTH-01', 'AUTH-19', 'AUTH-25'],
+    excluded: [],
+  },
+  'auth_exploit_collector.json': [reviewedEntry('AUTH-01'), reviewedEntry('AUTH-19')],
+  'auth_exploit_collector_renumbered.json': [
+    { ...reviewedEntry('AUTH-01'), vulnerability_id: 'AUTH-01' },
+    { ...reviewedEntry('AUTH-19'), vulnerability_id: 'AUTH-02' },
+  ],
+  'report.json': {
+    report_meta: { target: 'https://fixture.invalid', assessment_date: '2026-11-02', scope: 'Fixture', executive_summary: 'Fixture' },
+    findings: [finding('AUTH-01'), finding('AUTH-02')],
+    reconciliation_failed: [],
+  },
+};
+for (const [name, value] of Object.entries(driftedFiles))
+  await writeFile(path.join(driftedDir, name), `${JSON.stringify(value, null, 2)}\n`);
+await run('git', ['add', '--', '.'], { cwd: driftedDir, env });
+await run('git', ['commit', '-m', 'Legacy drifted map fixture'], { cwd: driftedDir, env });
+const repairs = [];
+const driftedCompaction = await compactReportFindings({
+  deliverablesDir: driftedDir, participatingClasses: ['auth'], renumberFailedClasses: [],
+  logger: { info() {}, warn(message) { repairs.push(message); }, error() {} },
+});
+assert.equal(driftedCompaction.skipped, false);
+assert.equal(repairs.length, 1);
+const driftedMap = JSON.parse(await readFile(path.join(driftedDir, 'auth_renumber_map.json'), 'utf8'));
+assert.deepEqual(driftedMap.order, Object.keys(driftedMap.map));
+assert.deepEqual(driftedMap.map, { 'AUTH-01': 'AUTH-01', 'AUTH-19': 'AUTH-02' });
+console.log('PASS a committed renumber map whose order drifted from its keys is repaired, not refused');
