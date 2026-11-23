@@ -9,7 +9,7 @@
  * acceptance cases in Shannon_Java_Source_Sink_Agent_Tool_开发实施文档.md (§6.4, §11.1, §11.2).
  */
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -247,6 +247,64 @@ const ok = (condition, message) => {
   );
   ok(disabled.status === 'unavailable', 'disabled feature returns unavailable');
   ok(disabled.candidates.length === 0, 'disabled feature returns no candidates');
+}
+
+// --- tool artifact: the full page is written to scratchpad, never lost to the inline cap -------
+{
+  const { createSecurityCandidatesTool, SECURITY_CANDIDATES_RESULTS_SUBDIR } = await import(
+    '../apps/worker/dist/ai/pi/security-candidates-tool.js'
+  );
+  const toolDir = await mkdtemp(path.join(tmpdir(), 'shannon-jsec-tool-'));
+  await cp(fixture, toolDir, { recursive: true });
+  const tool = createSecurityCandidatesTool(toolDir);
+
+  const direct = await query({ vulnerability_type: 'injection', limit: 100 });
+  ok(direct.returned > 8, 'fixture page is larger than the inline preview');
+
+  const result = await tool.execute('call-1', { vulnerability_type: 'injection', limit: 100 });
+  const inline = result.content[0].text;
+  ok(result.details?.results_file !== undefined, 'tool reports a results_file path');
+  ok(
+    result.details.results_file.startsWith(`${SECURITY_CANDIDATES_RESULTS_SUBDIR}/`),
+    'results_file is a scratchpad-relative POSIX path',
+  );
+  const artifact = await readFile(path.join(toolDir, result.details.results_file), 'utf8');
+  const artifactCandidates = (artifact.match(/^- /gm) ?? []).length;
+  ok(artifactCandidates === direct.returned, 'the artifact lists every candidate on the page');
+  ok(artifact.includes('status=complete'), 'the artifact keeps the header line');
+  ok(!inline.includes('…(truncated)'), 'inline text is not truncated when the artifact is written');
+  ok(inline.length < artifact.length, 'inline preview is smaller than the artifact');
+  ok(inline.includes('results_file='), 'inline text points at the artifact');
+  ok(inline.includes('hint:'), 'inline text tells the agent to read the artifact');
+  ok(
+    inline.includes(`…(+${direct.returned - 8} more candidate`),
+    'inline preview discloses how many candidates live only in the artifact',
+  );
+
+  // A page far larger than the inline cap still lands whole in the file.
+  const wide = await findSecurityCandidates({ vulnerability_type: 'xss', limit: 100 }, { sourceDir: toolDir, config });
+  const wideTool = await tool.execute('call-2', { vulnerability_type: 'xss', limit: 100 });
+  const wideArtifact = await readFile(path.join(toolDir, wideTool.details.results_file), 'utf8');
+  ok(
+    (wideArtifact.match(/^- /gm) ?? []).length === wide.returned,
+    'a second query writes its own full artifact',
+  );
+  ok(wideTool.details.results_file !== result.details.results_file, 'each query page uses a distinct artifact name');
+
+  // Unwritable artifact directory degrades to the capped inline list, never to an error.
+  const blocker = path.join(toolDir, 'not-a-directory');
+  await writeFile(blocker, 'x');
+  const fallbackTool = createSecurityCandidatesTool(toolDir, { outputDir: blocker });
+  const fallback = await fallbackTool.execute('call-3', { vulnerability_type: 'injection', limit: 100 });
+  ok(fallback.details === undefined, 'a failed artifact write reports no results_file');
+  ok(
+    fallback.content[0].text.includes('failed to write full result artifact'),
+    'a failed artifact write is disclosed in the inline warnings',
+  );
+  ok(
+    (fallback.content[0].text.match(/^- /gm) ?? []).length === direct.returned,
+    'the inline fallback still lists every candidate that fits the inline cap',
+  );
 }
 
 console.log(`java-security-candidates: ${checks} assertions passed`);

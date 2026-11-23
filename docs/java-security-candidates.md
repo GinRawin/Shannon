@@ -5,6 +5,11 @@ uses a curated Java source/sink rule set plus a lightweight Tree-sitter AST scan
 source, sink, transform, and security-boundary locations as `xx.java:line`. The agent still performs
 the source reading, path tracing, and vulnerability judgement itself.
 
+The complete candidate list for the requested page is written to a scratchpad file
+(`<target>/.shannon/scratchpad/security-candidates/<vulnerability_type>[_<function>][_page-<hash>].txt`)
+and the tool result reports its path plus a short preview. The agent reads or greps that file, so a
+large page is never lost to the inline size cap.
+
 The tool returns locations and evidence only. It never claims a confirmed vulnerability, never runs a
 full data-flow/taint analysis, never compiles or runs the target, and never downloads rules at scan
 time. It is registered only for the `pre-recon` and `recon` stages — no workflow phase, deliverable,
@@ -23,11 +28,13 @@ Input:
 }
 ```
 
-Output: `status` (`complete | partial | unavailable | invalid_cursor`), the returned `candidates`,
-`next_cursor`, `has_more`, `snapshot_id`, `stats`, and `warnings`. Each candidate carries `role`,
-`vulnerability_types`, `category`, `file` (source-root-relative POSIX path), `line`, `column`,
-`containing_symbol`, `function`, `resolved_api`, `confidence`, `code`, `constant_state`, `reason`,
-and `rule_ids`.
+Output (inline to the agent): `status` (`complete | partial | unavailable | invalid_cursor`), the
+`results_file` path, a `results_count` line, a short preview, `next_cursor`, and `warnings`. The full
+result is the file at `results_file` (target-relative POSIX path), which contains the header line plus
+every candidate on the page. Each candidate carries `role`, `vulnerability_types`, `category`, `file`
+(source-root-relative POSIX path), `line`, `column`, `containing_symbol`, `function`, `resolved_api`,
+`confidence`, `code`, `constant_state`, `reason`, and `rule_ids`. If the artifact cannot be written,
+the tool falls back to the previous capped inline list with a warning.
 
 ### Function-name search
 
