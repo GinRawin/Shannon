@@ -67,6 +67,9 @@ for (const klass of ALL_RECONCILIATION_CLASSES) {
   const revised: AddExploitInput[] = [],
     renumbered: AddExploitInput[] = [];
   for (const entry of entries) {
+    // False-positive verdicts are terminal non-report outcomes: they never appear in the
+    // renumber map or the report, so a repair pass drops them instead of rewriting evidence.
+    if (entry.status === 'false_positive') continue;
     const findingId = mapping.map[entry.vulnerability_id];
     if (!findingId || !included.has(findingId)) continue;
     const decision = decisions[findingId];

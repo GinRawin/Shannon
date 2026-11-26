@@ -124,7 +124,10 @@ export function buildRenumberMap(
       throw new RenumberError('unmappable-survivor', false);
     }
     const numericReference = parseRefNumber(record.vulnerability_id, vulnerabilityClass);
-    if (numericReference === null || (record.status !== 'exploited' && record.status !== 'blocked')) {
+    if (
+      numericReference === null ||
+      (record.status !== 'exploited' && record.status !== 'blocked' && record.status !== 'false_positive')
+    ) {
       throw new RenumberError('unmappable-survivor', false);
     }
     return {
@@ -143,7 +146,8 @@ export function buildRenumberMap(
 
   const exploited = decorated.filter((entry) => entry.status === 'exploited');
   const blocked = decorated.filter((entry) => entry.status === 'blocked');
-  if (exploited.length + blocked.length !== decorated.length) {
+  const falsePositives = decorated.filter((entry) => entry.status === 'false_positive');
+  if (exploited.length + blocked.length + falsePositives.length !== decorated.length) {
     throw new RenumberError('unmappable-survivor', false);
   }
 

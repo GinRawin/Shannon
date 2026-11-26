@@ -1357,11 +1357,13 @@ async function runExploitAgentWithCollector(
     const missingIds = [...validIds].filter((id) => !emittedIds.has(id));
     const exploitedCount = collected.filter((e) => e.status === 'exploited').length;
     const blockedCount = collected.filter((e) => e.status === 'blocked').length;
+    const falsePositiveCount = collected.filter((e) => e.status === 'false_positive').length;
 
     logger.info(`${vulnClass} exploit tool call metrics`, {
       queueSize: validIds.size,
       exploited: exploitedCount,
       blocked: blockedCount,
+      falsePositive: falsePositiveCount,
       missing: missingIds.length,
     });
 
