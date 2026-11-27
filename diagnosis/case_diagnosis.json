@@ -1,0 +1,443 @@
+{
+  "schema": "shannon-diagnosis/1",
+  "generated_for": "2026-11-25 batch",
+  "classes": [
+    "injection",
+    "xss",
+    "auth",
+    "authz",
+    "ssrf"
+  ],
+  "note": "queued=analysis candidates; exploited/blocked=exploit verdicts; unprocessed=no verdict (from evidence.md); record_verified/excluded=record stage",
+  "result": [
+    {
+      "target": "ai-media-fusion-platform-uat",
+      "run_id": "ai-media-fusion-platform-uat-immotors-com_shannon-1795599033612",
+      "repo_path": "/repos/ai-media-fusion-platform-uat-volc",
+      "phases": {
+        "pre-recon": {
+          "duration_ms": 545453,
+          "duration_percentage": 3.8513576870261823,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "recon": {
+          "duration_ms": 886954,
+          "duration_percentage": 6.26264243837438,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "vulnerability-analysis": {
+          "duration_ms": 2952710,
+          "duration_percentage": 20.84862005719847,
+          "cost_usd": 0,
+          "agent_count": 5
+        },
+        "exploitation": {
+          "duration_ms": 8995140,
+          "duration_percentage": 63.513266193194816,
+          "cost_usd": 0,
+          "agent_count": 12
+        },
+        "reporting": {
+          "duration_ms": 301304,
+          "duration_percentage": 2.1274600681117106,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "background": {
+          "duration_ms": 423124,
+          "duration_percentage": 2.987611893170019,
+          "cost_usd": 0,
+          "agent_count": 10
+        }
+      },
+      "classes": {
+        "injection": {
+          "queued": 0,
+          "exploited": 0,
+          "blocked": 0,
+          "other": 0,
+          "unprocessed": 0,
+          "queued_not_collected": 0,
+          "record_verified": 0
+        },
+        "xss": {
+          "queued": 4,
+          "exploited": 0,
+          "blocked": 2,
+          "other": 0,
+          "unprocessed": 2,
+          "queued_not_collected": 2,
+          "record_verified": 0
+        },
+        "auth": {
+          "queued": 14,
+          "exploited": 5,
+          "blocked": 6,
+          "other": 0,
+          "unprocessed": 3,
+          "queued_not_collected": 3,
+          "record_verified": 4
+        },
+        "authz": {
+          "queued": 26,
+          "exploited": 15,
+          "blocked": 10,
+          "other": 0,
+          "unprocessed": 1,
+          "queued_not_collected": 1,
+          "record_verified": 15
+        },
+        "ssrf": {
+          "queued": 5,
+          "exploited": 1,
+          "blocked": 4,
+          "other": 0,
+          "unprocessed": 0,
+          "queued_not_collected": 0,
+          "record_verified": 1
+        }
+      },
+      "unprocessed_by_class": {
+        "injection": [],
+        "xss": [
+          "XSS-01",
+          "XSS-02"
+        ],
+        "auth": [
+          "AUTH-10",
+          "AUTH-11",
+          "AUTH-12"
+        ],
+        "authz": [
+          "AUTHZ-17"
+        ],
+        "ssrf": []
+      },
+      "excluded": [
+        {
+          "finding_id": "AUTH-02",
+          "report_finding_id": "AUTH-01",
+          "vulnerability_class": "auth",
+          "reasons": [
+            "missing verified Record verdict",
+            "missing complete associated HTTP packet"
+          ]
+        },
+        {
+          "finding_id": "AUTHZ-26",
+          "report_finding_id": "AUTHZ-12",
+          "vulnerability_class": "authz",
+          "reasons": [
+            "missing verified Record verdict",
+            "missing complete associated HTTP packet"
+          ]
+        },
+        {
+          "finding_id": "AUTHZ-13",
+          "report_finding_id": "AUTHZ-04",
+          "vulnerability_class": "authz",
+          "reasons": [
+            "missing verified Record verdict",
+            "missing complete associated HTTP packet"
+          ]
+        }
+      ],
+      "totals": {
+        "queued": 49,
+        "exploited": 21,
+        "blocked": 22,
+        "unprocessed": 6,
+        "record_verified": 20,
+        "record_excluded": 3
+      }
+    },
+    {
+      "target": "cp-dev-office-ap",
+      "run_id": "cp-dev-office-ap-immotors-com_shannon-1795606717356",
+      "repo_path": "/repos/zjsystem-cloud-dev",
+      "phases": {
+        "pre-recon": {
+          "duration_ms": 935914,
+          "duration_percentage": 5.502618687575404,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "recon": {
+          "duration_ms": 1034463,
+          "duration_percentage": 6.082028301110267,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "vulnerability-analysis": {
+          "duration_ms": 4729752,
+          "duration_percentage": 27.808133805880818,
+          "cost_usd": 0,
+          "agent_count": 5
+        },
+        "exploitation": {
+          "duration_ms": 9476028,
+          "duration_percentage": 55.713418921810955,
+          "cost_usd": 0,
+          "agent_count": 13
+        },
+        "reporting": {
+          "duration_ms": 210519,
+          "duration_percentage": 1.237726739304772,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "background": {
+          "duration_ms": 585660,
+          "duration_percentage": 3.4433331059962886,
+          "cost_usd": 0,
+          "agent_count": 10
+        }
+      },
+      "classes": {
+        "injection": {
+          "queued": 13,
+          "exploited": 0,
+          "blocked": 10,
+          "other": 0,
+          "unprocessed": 3,
+          "queued_not_collected": 3,
+          "record_verified": 0
+        },
+        "xss": {
+          "queued": 9,
+          "exploited": 1,
+          "blocked": 6,
+          "other": 0,
+          "unprocessed": 2,
+          "queued_not_collected": 2,
+          "record_verified": 0
+        },
+        "auth": {
+          "queued": 12,
+          "exploited": 4,
+          "blocked": 7,
+          "other": 0,
+          "unprocessed": 1,
+          "queued_not_collected": 1,
+          "record_verified": 2
+        },
+        "authz": {
+          "queued": 22,
+          "exploited": 5,
+          "blocked": 4,
+          "other": 0,
+          "unprocessed": 13,
+          "queued_not_collected": 13,
+          "record_verified": 8
+        },
+        "ssrf": {
+          "queued": 4,
+          "exploited": 1,
+          "blocked": 2,
+          "other": 0,
+          "unprocessed": 1,
+          "queued_not_collected": 1,
+          "record_verified": 1
+        }
+      },
+      "unprocessed_by_class": {
+        "injection": [
+          "INJ-05",
+          "INJ-06",
+          "INJ-07"
+        ],
+        "xss": [
+          "XSS-08",
+          "XSS-09"
+        ],
+        "auth": [
+          "AUTH-11"
+        ],
+        "authz": [
+          "AUTHZ-07",
+          "AUTHZ-08",
+          "AUTHZ-09",
+          "AUTHZ-10",
+          "AUTHZ-11",
+          "AUTHZ-12",
+          "AUTHZ-13",
+          "AUTHZ-16",
+          "AUTHZ-17",
+          "AUTHZ-18",
+          "AUTHZ-19",
+          "AUTHZ-21",
+          "AUTHZ-22"
+        ],
+        "ssrf": [
+          "SSRF-04"
+        ]
+      },
+      "excluded": [
+        {
+          "finding_id": "XSS-01",
+          "report_finding_id": "XSS-01",
+          "vulnerability_class": "xss",
+          "reasons": [
+            "missing verified Record verdict",
+            "missing complete associated HTTP packet",
+            "missing JavaScript execution evidence"
+          ]
+        },
+        {
+          "finding_id": "AUTH-01",
+          "report_finding_id": "AUTH-04",
+          "vulnerability_class": "auth",
+          "reasons": [
+            "missing verified Record verdict",
+            "missing complete associated HTTP packet"
+          ]
+        },
+        {
+          "finding_id": "AUTH-02",
+          "report_finding_id": "AUTH-01",
+          "vulnerability_class": "auth",
+          "reasons": [
+            "missing verified Record verdict",
+            "missing complete associated HTTP packet"
+          ]
+        }
+      ],
+      "totals": {
+        "queued": 60,
+        "exploited": 11,
+        "blocked": 29,
+        "unprocessed": 20,
+        "record_verified": 11,
+        "record_excluded": 3
+      }
+    },
+    {
+      "target": "imwl-uat-app",
+      "run_id": "imwl-uat-app-immotors-com_shannon-1795616687586",
+      "repo_path": "/repos/imwl-武器库",
+      "phases": {
+        "pre-recon": {
+          "duration_ms": 735327,
+          "duration_percentage": 3.7335494139436274,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "recon": {
+          "duration_ms": 1232636,
+          "duration_percentage": 6.258586200977004,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "vulnerability-analysis": {
+          "duration_ms": 5338589,
+          "duration_percentage": 27.106152544699018,
+          "cost_usd": 0,
+          "agent_count": 5
+        },
+        "exploitation": {
+          "duration_ms": 10935698,
+          "duration_percentage": 55.524914574011966,
+          "cost_usd": 0,
+          "agent_count": 11
+        },
+        "reporting": {
+          "duration_ms": 491613,
+          "duration_percentage": 2.4961159158266573,
+          "cost_usd": 0,
+          "agent_count": 1
+        },
+        "background": {
+          "duration_ms": 927298,
+          "duration_percentage": 4.708262996532288,
+          "cost_usd": 0,
+          "agent_count": 10
+        }
+      },
+      "classes": {
+        "injection": {
+          "queued": 4,
+          "exploited": 0,
+          "blocked": 1,
+          "other": 0,
+          "unprocessed": 3,
+          "queued_not_collected": 3,
+          "record_verified": 0
+        },
+        "xss": {
+          "queued": 6,
+          "exploited": 4,
+          "blocked": 1,
+          "other": 0,
+          "unprocessed": 1,
+          "queued_not_collected": 1,
+          "record_verified": 3
+        },
+        "auth": {
+          "queued": 24,
+          "exploited": 12,
+          "blocked": 12,
+          "other": 0,
+          "unprocessed": 0,
+          "queued_not_collected": 0,
+          "record_verified": 12
+        },
+        "authz": {
+          "queued": 22,
+          "exploited": 17,
+          "blocked": 3,
+          "other": 0,
+          "unprocessed": 2,
+          "queued_not_collected": 2,
+          "record_verified": 17
+        },
+        "ssrf": {
+          "queued": 7,
+          "exploited": 4,
+          "blocked": 3,
+          "other": 0,
+          "unprocessed": 0,
+          "queued_not_collected": 0,
+          "record_verified": 4
+        }
+      },
+      "unprocessed_by_class": {
+        "injection": [
+          "INJ-01",
+          "INJ-02",
+          "INJ-03"
+        ],
+        "xss": [
+          "XSS-05"
+        ],
+        "auth": [],
+        "authz": [
+          "AUTHZ-01",
+          "AUTHZ-20"
+        ],
+        "ssrf": []
+      },
+      "excluded": [
+        {
+          "finding_id": "XSS-03",
+          "report_finding_id": "XSS-01",
+          "vulnerability_class": "xss",
+          "reasons": [
+            "missing verified Record verdict",
+            "missing complete associated HTTP packet",
+            "missing JavaScript execution evidence"
+          ]
+        }
+      ],
+      "totals": {
+        "queued": 63,
+        "exploited": 37,
+        "blocked": 20,
+        "unprocessed": 6,
+        "record_verified": 36,
+        "record_excluded": 1
+      }
+    }
+  ]
+}
