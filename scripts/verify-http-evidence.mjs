@@ -25,7 +25,9 @@ const load = (name) => import(pathToFileURL(`${temporary}/dist/${name}.js`));
 const { parseCurlTrace } = await load('services/http-capture');
 const { captureHttpRequest, readVerifiedHttpEvidence } = await load('services/capture-http-request');
 const { verifyHttpReplay, replayPlanDigest, hasVerifiedReplay, containsReplaySecret, replayPlanError } = await load('services/http-replay');
-const { attachHttpEvidence, configuredCaptureRedactions, renderCapturedHttpEvidence, writeReproductionScript } = await load('services/http-evidence');
+const { attachHttpEvidence, configuredCaptureRedactions, credentialCaptureRedactions, renderCapturedHttpEvidence, writeReproductionScript } = await load('services/http-evidence');
+// Mirror the production report path: identity values (username/email) are intentionally not masked.
+const reportRedactions = (credentials) => credentialCaptureRedactions(configuredCaptureRedactions(credentials));
 const { buildRenumberMap } = await load('services/renumber-core');
 const { deepRemapStrings } = await load('services/compaction-core');
 const { createExploitCollector } = await load('collectors/exploit-collector');
@@ -380,16 +382,16 @@ try {
     assert.equal(adapted.capturedHttpEvidence, undefined);
     assert.match(adapted.verificationEvidence.items[0].text, /Actual browser observation/);
   });
-  await check('report credential projection preserves JSON keys, endpoint paths, and session cookies', async () => {
+  await check('report credential projection keeps identity, masks credentials, and preserves JSON keys, paths and cookies', async () => {
     const credentialCapture = await captureHttpRequest({ deliverablesDir: dir, findingId: 'AUTH-07', curlArguments: ['-sS', '-H', 'Content-Type: application/json', '-H', 'Cookie: session=admin', '--data-binary', JSON.stringify({ username: 'admin', password: 'password' }), `${target}/login`] });
     await commit({ 'auth_renumber_map.json': { map: { 'AUTH-07': 'AUTH-01' } } });
     const auth = { vulnerability_id: 'AUTH-07', http_evidence_display: 'include', http_evidence_ids: [credentialCapture.receipt.capture_id], http_evidence_receipts: [credentialCapture.receipt] };
     await commit({ 'auth_exploit_collector.json': [auth], 'auth_exploit_collector_renumbered.json': [{ ...auth, vulnerability_id: 'AUTH-01' }] });
-    const projected = await attachHttpEvidence([{ finding_id: 'AUTH-01', status: 'exploited' }], dir, configuredCaptureRedactions({ username: 'admin', password: 'password' }));
+    const projected = await attachHttpEvidence([{ finding_id: 'AUTH-01', status: 'exploited' }], dir, reportRedactions({ username: 'admin', password: 'password' }));
     const section = projected[0].additional_sections.find((section) => section.heading === '捕获的 HTTP 请求与响应');
     const request = section.items.find((item) => item.kind === 'code').block.content;
     assert.match(request, /Cookie: session=admin/);
-    assert.match(request, /"username":"\$username","password":"\$password"/);
+    assert.match(request, /"username":"admin","password":"\$password"/);
     assert.match(request, /POST \/login HTTP/);
   });
   await check('HTTP content containing Markdown fences stays inside its evidence block', async () => {

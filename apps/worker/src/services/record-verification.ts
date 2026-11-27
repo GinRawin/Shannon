@@ -4,8 +4,8 @@ import type { AddExploitInput } from '../collectors/exploit-collector.js';
 import type { RecordVerdict } from '../collectors/record-collector.js';
 import { atomicWrite } from '../utils/file-io.js';
 import { type BrowserReplayPlan, hasTrustedBrowserReplay } from './browser-replay.js';
-import { renderExploitDeliverable } from './exploit-renderer.js';
 import { expansionExploitQueueFilename } from './expansion-queues.js';
+import { renderExploitDeliverable } from './exploit-renderer.js';
 import { loadPacketBackedFindingIds } from './http-evidence.js';
 import type { HttpReplayPlan } from './http-replay.js';
 
@@ -419,7 +419,19 @@ async function recordReportCandidates(deliverablesDir: string): Promise<RecordRe
         const finalId = expanded ? entry.vulnerability_id : (map[entry.vulnerability_id] ?? entry.vulnerability_id);
         const reasons: string[] = [];
         if (verdict?.status !== 'verified') reasons.push('missing verified Record verdict');
-        if (!packetBackedIds.has(finalId)) reasons.push('missing complete associated HTTP packet');
+        // A pure client-side XSS sink may be admitted by its host browser receipt alone, with no packet.
+        const browserBacked =
+          vulnerabilityClass === 'xss' &&
+          !((entry.http_evidence_ids as string[] | undefined) ?? []).length &&
+          (await hasTrustedBrowserReplay({
+            deliverablesDir,
+            findingId: entry.vulnerability_id,
+            stage: verdict?.stage,
+            plan: entry.browser_replay as BrowserReplayPlan | undefined,
+            verification: verdict?.browser_verification,
+            httpCaptureIds: [],
+          }));
+        if (!packetBackedIds.has(finalId) && !browserBacked) reasons.push('missing complete associated HTTP packet');
         if (
           vulnerabilityClass === 'xss' &&
           (JSON.stringify([...(verdict?.capture_ids ?? [])].sort()) !==
@@ -540,8 +552,12 @@ export async function applyRecordRetryEvidence(
         Object.assign(entry, {
           http_evidence_ids: verdict.capture_ids,
           http_evidence_receipts: verdict.http_evidence_receipts ?? [],
-          http_evidence_display: 'include',
-          verification_method: verdict.browser_verification ? 'mixed' : 'http',
+          http_evidence_display: verdict.capture_ids.length ? 'include' : 'omit',
+          verification_method: verdict.browser_verification
+            ? verdict.capture_ids.length
+              ? 'mixed'
+              : 'browser'
+            : 'http',
           http_evidence_reason: verdict.reason,
           http_replay: plans.get(verdict.finding_id),
           http_replay_verification: verdict.http_replay_verification,

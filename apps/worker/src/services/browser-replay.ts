@@ -9,6 +9,9 @@ import type { HttpEvidenceReceipt } from './capture-http-request.js';
 import { containsReplaySecret } from './http-replay.js';
 
 const text = () => Type.String({ minLength: 1, maxLength: 16000 });
+type HostObservation = { observed: string; page_url: string; observed_at: string; page: Page };
+// biome-ignore lint/suspicious/noTemplateCurlyInString: literal runtime placeholder syntax.
+const XSS_MARKER_PLACEHOLDER = '${XSS_MARKER}';
 const action = <T extends Record<string, import('typebox').TSchema>>(properties: T) =>
   Type.Object(properties, { additionalProperties: false });
 const BrowserActionSchema = Type.Union([
@@ -29,6 +32,7 @@ const BrowserActionSchema = Type.Union([
     ]),
   }),
   action({ action: Type.Literal('wait_for'), selector: text() }),
+  action({ action: Type.Literal('assert_text'), selector: text(), value: text() }),
 ]);
 
 export const BrowserReplaySchema = Type.Object(
@@ -42,7 +46,7 @@ export const BrowserReplaySchema = Type.Object(
   {
     additionalProperties: false,
     description:
-      'Host-executed XSS reproduction. Only navigation and UI actions; no JavaScript evaluation. Inject alert("${XSS_MARKER}") through the proven vulnerable input. The host replaces XSS_MARKER with an unpredictable per-attempt challenge and observes the exact dialog itself.',
+      'Host-executed XSS reproduction. Only navigation and UI actions; no JavaScript evaluation. Inject the payload through the proven vulnerable input using ${XSS_MARKER}; the host replaces it with an unpredictable per-attempt challenge and observes either the exact dialog or an explicit assert_text DOM assertion carrying the same challenge value.',
   },
 );
 
@@ -60,7 +64,7 @@ export interface BrowserReplayVerification {
   observed_at: string;
   target_origin: string;
   page_url: string;
-  assertion_type: 'dialog_exact';
+  assertion_type: 'dialog_exact' | 'dom_marker';
   expected: string;
   observed: string;
   evidence_files: string[];
@@ -82,6 +86,8 @@ export function browserReplayPlanError(plan: BrowserReplayPlan): string | undefi
     if (step.action === 'goto' && !step.url.startsWith('${BASE_URL}'))
       return 'Browser navigation must begin with ${BASE_URL}.';
   }
+  if (plan.steps.some((step) => step.action === 'assert_text' && step.value !== XSS_MARKER_PLACEHOLDER))
+    return `A DOM assertion must assert exactly ${XSS_MARKER_PLACEHOLDER}.`;
   if (
     !plan.steps.some((step) =>
       (step.action === 'goto' ? step.url : step.action === 'fill' ? step.value : '').includes('${XSS_MARKER}'),
@@ -140,10 +146,7 @@ export async function verifyBrowserReplay(args: {
     args.attempt < 1
   )
     return { error: 'Invalid browser replay identity.' };
-  if (
-    !args.httpEvidence.length ||
-    args.httpEvidence.some((receipt) => !receipt.complete || receipt.finding_id !== args.findingId)
-  )
+  if (args.httpEvidence.some((receipt) => !receipt.complete || receipt.finding_id !== args.findingId))
     return { error: "Browser replay requires this finding's complete HTTP replay receipts." };
   let origin: string;
   try {
@@ -208,8 +211,8 @@ export async function verifyBrowserReplay(args: {
       ignoreHTTPSErrors: args.plan.insecure ?? false,
       ...(storageState ? { storageState } : {}),
     });
-    context.setDefaultTimeout(Math.min(deadline, 10000));
-    context.setDefaultNavigationTimeout(Math.min(deadline, 10000));
+    context.setDefaultTimeout(deadline);
+    context.setDefaultNavigationTimeout(deadline);
     // Playwright skips route handlers for redirects. Inspect response headers through
     // a separate Chromium session before allowing the browser to follow Location.
     const redirectGuards = new WeakMap<Page, Promise<void>>();
@@ -255,7 +258,6 @@ export async function verifyBrowserReplay(args: {
       if (new URL(socket.url()).origin.replace(/^ws/, 'http') === origin) socket.connectToServer();
       else socket.close();
     });
-    let event: { observed: string; page_url: string; observed_at: string; page: Page } | undefined;
     let acceptEvents = true;
     let signalObserved: (() => void) | undefined;
     const observed = new Promise<void>((resolve) => {
@@ -265,7 +267,12 @@ export async function verifyBrowserReplay(args: {
       void guardRedirects(page).catch(() => page.close().catch(() => {}));
       page.on('dialog', async (dialog) => {
         if (acceptEvents && dialog.message() === marker && page.url().startsWith(`${origin}/`)) {
-          event = { observed: dialog.message(), page_url: page.url(), observed_at: new Date().toISOString(), page };
+          dialogEvent = {
+            observed: dialog.message(),
+            page_url: page.url(),
+            observed_at: new Date().toISOString(),
+            page,
+          };
           signalObserved?.();
         }
         await dialog.dismiss().catch(() => {});
@@ -295,25 +302,47 @@ export async function verifyBrowserReplay(args: {
         case 'wait_for':
           await page.locator(step.selector).waitFor({ state: 'visible' });
           break;
+        case 'assert_text':
+          break;
       }
     };
     let failure: unknown;
     let screenshot: Buffer | undefined;
+    let dialogEvent: HostObservation | undefined;
+    let domEvent: HostObservation | undefined;
+    let observation: HostObservation | undefined;
     try {
       phase = 'browser_steps';
       for (const step of args.plan.steps) await execute(step);
       phase = 'execution_signal';
-      if (!event)
-        await Promise.race([
-          observed,
-          page.waitForTimeout(deadline).then(() => {
-            throw new Error('Browser execution signal timed out.');
-          }),
-        ]);
-      if (!event) throw new Error('No JavaScript execution dialog matched the host challenge.');
+      const domAssertion = args.plan.steps.find((step) => step.action === 'assert_text');
+      if (!dialogEvent) {
+        if (domAssertion && domAssertion.action === 'assert_text') {
+          const until = Date.now() + Math.min(deadline, 15000);
+          while (!dialogEvent && !domEvent && Date.now() < until) {
+            const domText = await page
+              .locator(domAssertion.selector)
+              .first()
+              .innerText({ timeout: 2000 })
+              .catch(() => '');
+            if (domText.includes(marker) && page.url().startsWith(`${origin}/`))
+              domEvent = { observed: marker, page_url: page.url(), observed_at: new Date().toISOString(), page };
+            else await page.waitForTimeout(250).catch(() => {});
+          }
+        } else {
+          await Promise.race([
+            observed,
+            page.waitForTimeout(deadline).then(() => {
+              throw new Error('Browser execution signal timed out.');
+            }),
+          ]);
+        }
+      }
+      observation = dialogEvent ?? domEvent;
+      if (!observation) throw new Error('No JavaScript execution signal matched the host challenge.');
       acceptEvents = false;
       phase = 'screenshot';
-      screenshot = await event.page.screenshot({ type: 'png', timeout: 5000 });
+      screenshot = await observation.page.screenshot({ type: 'png', timeout: 5000 });
     } catch (error) {
       failure = error;
     } finally {
@@ -327,7 +356,7 @@ export async function verifyBrowserReplay(args: {
         }
       }
     }
-    if (failure || !event || !screenshot) throw failure ?? new Error('Browser execution evidence is incomplete.');
+    if (failure || !observation || !screenshot) throw failure ?? new Error('Browser execution evidence is incomplete.');
     if (args.signal?.aborted) throw new Error('Browser replay was cancelled.');
     phase = 'evidence_persistence';
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -343,11 +372,11 @@ export async function verifyBrowserReplay(args: {
       http_capture_ids: args.httpEvidence.map((item) => item.capture_id),
       verified_at: new Date().toISOString(),
       target_origin: origin,
-      page_url: event.page_url,
-      assertion_type: 'dialog_exact' as const,
+      page_url: observation.page_url,
+      assertion_type: dialogEvent ? ('dialog_exact' as const) : ('dom_marker' as const),
       expected: marker,
-      observed: event.observed,
-      observed_at: event.observed_at,
+      observed: observation.observed,
+      observed_at: observation.observed_at,
       evidence_files: [evidenceFile],
       evidence_sha256: [digest(screenshot)],
     };
@@ -366,7 +395,11 @@ export async function verifyBrowserReplay(args: {
   }
 }
 
-/** Revalidate persisted provenance on collection and report/resume; old self-reported assertions fail closed. */
+/**
+ * Revalidate persisted provenance on collection and report/resume; old self-reported assertions fail
+ * closed. A browser-only finding (no HTTP packet, e.g. a hash-only DOM sink) is trusted when the host
+ * receipt cites no captures and the caller also cites none.
+ */
 export async function hasTrustedBrowserReplay(args: {
   deliverablesDir: string;
   verification: unknown;
@@ -390,7 +423,7 @@ export async function hasTrustedBrowserReplay(args: {
       !Number.isInteger(proof.attempt) ||
       proof.attempt < 1 ||
       proof.plan_sha256 !== browserReplayPlanDigest(args.plan) ||
-      proof.assertion_type !== 'dialog_exact' ||
+      !['dialog_exact', 'dom_marker'].includes(proof.assertion_type) ||
       !/^shannon_xss_[a-f0-9]{48}$/.test(proof.expected) ||
       proof.observed !== proof.expected ||
       !Number.isFinite(Date.parse(proof.verified_at)) ||
@@ -399,8 +432,8 @@ export async function hasTrustedBrowserReplay(args: {
       !['http:', 'https:'].includes(new URL(proof.target_origin).protocol) ||
       new URL(proof.page_url).origin !== proof.target_origin ||
       !Array.isArray(proof.http_capture_ids) ||
-      !args.httpCaptureIds.length ||
-      JSON.stringify([...proof.http_capture_ids].sort()) !== JSON.stringify([...args.httpCaptureIds].sort())
+      ((proof.http_capture_ids.length > 0 || args.httpCaptureIds.length > 0) &&
+        JSON.stringify([...proof.http_capture_ids].sort()) !== JSON.stringify([...args.httpCaptureIds].sort()))
     )
       return false;
     const relative = `browser-replay-verifications/${args.findingId}/${proof.attempt_id}`;

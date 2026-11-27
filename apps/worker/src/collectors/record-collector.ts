@@ -194,7 +194,7 @@ export function createRecordCollector(options: {
       name: 'verify_http_replay',
       label: 'Execute Exploit Verification Plan',
       description:
-        'Execute the saved HTTP plan and, for XSS, the saved browser plan in a fresh host browser with an unpredictable dialog challenge. The host evaluates each status/body impact assertion and captures every real request/response. A passing result is required for a verified HTTP verdict.',
+        'Execute the saved HTTP plan and, for XSS, the saved browser plan in a fresh host browser with an unpredictable challenge. The host evaluates each status/body impact assertion and captures every real request/response. A pure client-side XSS sink with no HTTP plan and no server-side impact is verified by its browser assertion alone. A passing result is required before a verified verdict.',
       parameters: Type.Object({ finding_id: Type.String() }),
       async execute(_id, input, signal) {
         if (!options.validIds.has(input.finding_id))
@@ -206,19 +206,27 @@ export function createRecordCollector(options: {
           return errorResult(
             'The three-attempt replay limit has been reached. Record a failed verdict for exploit review.',
           );
-        if (!options.verifyReplay) return errorResult('Host replay verifier is unavailable.');
         const plan = options.verificationPlans?.get(input.finding_id);
-        if (!plan)
+        const browserPlan = options.browserPlans?.get(input.finding_id);
+        const isXss = options.xssFindingIds?.has(input.finding_id) || input.finding_id.startsWith('XSS-');
+        // A pure client-side XSS sink (URL fragment, DOM write) never reaches the server, so it has no
+        // HTTP impact to assert. Such a finding may be verified by the host browser receipt alone.
+        const browserOnly = isXss && !!browserPlan && !plan;
+        if (!plan && !browserOnly)
           return errorResult(
             'No structured HTTP verification plan was saved for this finding; record a failed verdict for review.',
           );
-        if ([...(plan.setup ?? []), ...plan.steps, ...(plan.cleanup ?? [])].some((step) => step.follow_redirects))
-          return errorResult('HTTP replay redirects are not supported by Record; record a failed verdict for review.');
-        if (hasLiteralReplayAuthentication(plan) || containsReplaySecret(plan, options.secrets ?? []))
-          return errorResult(
-            'Replay plan contains literal authentication material; record a failed verdict for review.',
-          );
-        const browserPlan = options.browserPlans?.get(input.finding_id);
+        if (plan) {
+          if (!options.verifyReplay) return errorResult('Host replay verifier is unavailable.');
+          if ([...(plan.setup ?? []), ...plan.steps, ...(plan.cleanup ?? [])].some((step) => step.follow_redirects))
+            return errorResult(
+              'HTTP replay redirects are not supported by Record; record a failed verdict for review.',
+            );
+          if (hasLiteralReplayAuthentication(plan) || containsReplaySecret(plan, options.secrets ?? []))
+            return errorResult(
+              'Replay plan contains literal authentication material; record a failed verdict for review.',
+            );
+        } else if (!options.verifyBrowserReplay) return errorResult('Host browser verifier is unavailable.');
         if (browserPlan && browserReplayContainsSecrets(browserPlan, options.secrets ?? []))
           return errorResult('Browser replay contains literal authentication material; use private replay variables.');
         replayResults.delete(input.finding_id);
@@ -226,37 +234,41 @@ export function createRecordCollector(options: {
         replayAttempts.set(input.finding_id, (replayAttempts.get(input.finding_id) ?? 0) + 1);
         inFlight.add(input.finding_id);
         let capturedReceipts: HttpEvidenceReceipt[] = [];
+        let httpVerification: HttpReplayVerification | undefined;
         try {
-          const result = await options.verifyReplay(input.finding_id, plan);
-          capturedReceipts = result.evidence ?? [];
-          for (const receipt of capturedReceipts) receipts.set(receipt.capture_id, receipt);
-          if (!result.verification) {
-            failedReplays.add(input.finding_id);
-            replayFailures.set(input.finding_id, {
-              error: result.error ?? 'Replay assertions did not pass.',
-              captureIds: capturedReceipts.map((receipt) => receipt.capture_id),
-              variableDiagnostics: result.variableDiagnostics ?? [],
-            });
-            return toolResult({
-              status: 'error',
-              message: result.error ?? 'Replay assertions did not pass.',
-              captures: capturedReceipts,
-            });
+          if (plan && options.verifyReplay) {
+            const result = await options.verifyReplay(input.finding_id, plan);
+            capturedReceipts = result.evidence ?? [];
+            for (const receipt of capturedReceipts) receipts.set(receipt.capture_id, receipt);
+            if (!result.verification) {
+              failedReplays.add(input.finding_id);
+              replayFailures.set(input.finding_id, {
+                error: result.error ?? 'Replay assertions did not pass.',
+                captureIds: capturedReceipts.map((receipt) => receipt.capture_id),
+                variableDiagnostics: result.variableDiagnostics ?? [],
+              });
+              return toolResult({
+                status: 'error',
+                message: result.error ?? 'Replay assertions did not pass.',
+                captures: capturedReceipts,
+              });
+            }
+            if (!capturedReceipts.length || capturedReceipts.some((receipt) => !receipt.complete)) {
+              failedReplays.add(input.finding_id);
+              replayFailures.set(input.finding_id, {
+                error: 'Replay assertions passed, but complete request/response packet captures are missing.',
+                captureIds: capturedReceipts.map((receipt) => receipt.capture_id),
+                variableDiagnostics: result.variableDiagnostics ?? [],
+              });
+              return toolResult({
+                status: 'error',
+                message: 'Replay assertions passed, but complete request/response packet captures are missing.',
+                captures: capturedReceipts,
+              });
+            }
+            httpVerification = result.verification;
           }
-          if (!capturedReceipts.length || capturedReceipts.some((receipt) => !receipt.complete)) {
-            failedReplays.add(input.finding_id);
-            replayFailures.set(input.finding_id, {
-              error: 'Replay assertions passed, but complete request/response packet captures are missing.',
-              captureIds: capturedReceipts.map((receipt) => receipt.capture_id),
-              variableDiagnostics: result.variableDiagnostics ?? [],
-            });
-            return toolResult({
-              status: 'error',
-              message: 'Replay assertions passed, but complete request/response packet captures are missing.',
-              captures: capturedReceipts,
-            });
-          }
-          if (options.xssFindingIds?.has(input.finding_id) || input.finding_id.startsWith('XSS-')) {
+          if (isXss) {
             const browserResult =
               browserPlan && options.verifyBrowserReplay
                 ? await options.verifyBrowserReplay(
@@ -290,12 +302,13 @@ export function createRecordCollector(options: {
             }
             browserResults.set(input.finding_id, browserResult.verification);
           }
-          replayResults.set(input.finding_id, { verification: result.verification, receipts: capturedReceipts });
+          if (httpVerification)
+            replayResults.set(input.finding_id, { verification: httpVerification, receipts: capturedReceipts });
           failedReplays.delete(input.finding_id);
           replayFailures.delete(input.finding_id);
           return successResult({
             finding_id: input.finding_id,
-            verification: result.verification,
+            verification: httpVerification,
             browser_verification: browserResults.get(input.finding_id),
             captures: capturedReceipts,
           });
@@ -416,7 +429,7 @@ export function createRecordCollector(options: {
       name: 'record_verification',
       label: 'Record Verification Result',
       description:
-        'Record a successful verification as verified, or a failed/inconclusive verification as failed. Every verified result must cite all complete packets from a passing HTTP replay; XSS additionally requires a passing JavaScript execution assertion.',
+        'Record a successful verification as verified, or a failed/inconclusive verification as failed. Every verified result must cite all complete packets from a passing HTTP replay, except a pure client-side XSS sink, which cites no captures and relies on the passing host browser assertion. XSS always requires a passing JavaScript execution assertion.',
       parameters: Type.Object({
         finding_id: Type.String(),
         status: Type.Union([Type.Literal('verified'), Type.Literal('failed')]),
@@ -446,20 +459,20 @@ export function createRecordCollector(options: {
           return errorResult('Every capture ID must be a real capture from this agent for this finding.');
         const replay = replayResults.get(input.finding_id);
         const browser = browserResults.get(input.finding_id);
+        const isXss = options.xssFindingIds?.has(input.finding_id) || input.finding_id.startsWith('XSS-');
         const httpVerified =
           !!replay &&
           replay.verification.assertion_count >= 1 &&
           input.capture_ids.length === replay.receipts.length &&
           replay.receipts.every((receipt) => input.capture_ids.includes(receipt.capture_id));
-        if (input.status === 'verified' && !httpVerified)
+        // A pure client-side XSS sink has no HTTP impact to assert; its host browser receipt alone
+        // verifies JavaScript execution, so it cites no captures and carries no HTTP replay.
+        const browserOnlyVerified = isXss && !!browser && !replay && input.capture_ids.length === 0;
+        if (input.status === 'verified' && !httpVerified && !browserOnlyVerified)
           return errorResult(
-            'A verified finding requires every complete capture from a passing HTTP replay. Diagnostic captures and browser-only observations are insufficient.',
+            'A verified finding requires every complete capture from a passing HTTP replay; only a client-side XSS sink with a passing host browser assertion and no HTTP captures may verify without one.',
           );
-        if (
-          input.status === 'verified' &&
-          (options.xssFindingIds?.has(input.finding_id) || input.finding_id.startsWith('XSS-')) &&
-          !browser
-        )
+        if (input.status === 'verified' && isXss && !browser)
           return errorResult(
             'XSS cannot be marked verified without a passing browser assertion that confirms JavaScript execution.',
           );

@@ -95,6 +95,89 @@ export interface HttpReplayVerification {
 }
 export const REPLAY_VARIABLES = ['BASE_URL', 'BEARER_TOKEN', 'COOKIE', 'USERNAME', 'PASSWORD', 'OTP'] as const;
 
+// The verifier extracts saved values into replay variables, so the names it writes must be uppercase
+// and must not shadow the operator variables it also exposes. The Python runner enforces the same
+// rule at execution time; checking here moves the failure to plan authoring with an actionable message.
+const SAVE_VARIABLE_NAME = /^[A-Z][A-Z0-9_]*$/;
+const RESERVED_REPLAY_VARIABLES = new Set<string>(REPLAY_VARIABLES);
+
+/** Return the first integer literal that JSON/JavaScript cannot represent exactly, if any. */
+function unsafeIntegerLiteral(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isInteger(value) && !Number.isSafeInteger(value) ? value : undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const bad = unsafeIntegerLiteral(item);
+      if (bad !== undefined) return bad;
+    }
+    return undefined;
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      const bad = unsafeIntegerLiteral(item);
+      if (bad !== undefined) return bad;
+    }
+  }
+  return undefined;
+}
+
+/** Saved variable names must match the runner's rule so plans fail at authoring, not mid-replay. */
+function savedVariableError(step: HttpReplayStep, label: string): string | undefined {
+  for (const field of ['save_json', 'save_headers'] as const) {
+    for (const name of Object.keys(step[field] ?? {})) {
+      if (!SAVE_VARIABLE_NAME.test(name) || RESERVED_REPLAY_VARIABLES.has(name))
+        return `${label} ${field} variable "${name}" must be uppercase (^[A-Z][A-Z0-9_]*$) and must not reuse an operator variable (${REPLAY_VARIABLES.join(', ')}).`;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Credential-bearing replay variable names. Their saved values must never appear literally in a plan;
+ * identity values (account numbers, user or media ids) may be asserted by a reviewed Record plan.
+ */
+const CREDENTIAL_VARIABLE_SEGMENTS = new Set([
+  'AUTH',
+  'AUTHORIZATION',
+  'BEARER',
+  'COOKIE',
+  'CREDENTIAL',
+  'CREDENTIALS',
+  'JWT',
+  'KEY',
+  'OTP',
+  'PASSWORD',
+  'PASSWD',
+  'PRIVATE',
+  'PWD',
+  'SECRET',
+  'SESSION',
+  'TICKET',
+  'TOKEN',
+]);
+
+export function isCredentialReplayVariable(name: string): boolean {
+  return name
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean)
+    .some(
+      (segment) => CREDENTIAL_VARIABLE_SEGMENTS.has(segment) || segment.endsWith('TOKEN') || segment.endsWith('SECRET'),
+    );
+}
+
+/** Credential-valued replay variables only; identity values may legitimately be asserted by a plan. */
+export function credentialReplayVariableValues(values: Record<string, string>, targetUrl: string): string[] {
+  let origin: string | undefined;
+  try {
+    origin = new URL(targetUrl).origin;
+  } catch {
+    origin = undefined;
+  }
+  return Object.entries(values)
+    .filter(([name, value]) => isCredentialReplayVariable(name) && (!origin || value !== origin))
+    .map(([, value]) => value);
+}
+
 export function replayPlanDigest(plan: HttpReplayPlan): string {
   return createHash('sha256').update(JSON.stringify(plan)).digest('hex');
 }
@@ -140,6 +223,13 @@ export function replayPlanError(plan: HttpReplayPlan): string | undefined {
         return `${label} content_type is only supported on a multipart file part.`;
       if (Object.keys(step.headers ?? {}).some((name) => name.toLowerCase() === 'content-type'))
         return `${label} must omit Content-Type for multipart; curl supplies the boundary.`;
+    }
+    const saveError = savedVariableError(step, label);
+    if (saveError) return saveError;
+    if (step.body_json) {
+      const unsafe = unsafeIntegerLiteral(step.body_json);
+      if (unsafe !== undefined)
+        return `${label} body_json contains the integer literal ${unsafe}, which JSON/JavaScript cannot represent exactly; quote it as a string or reference a \${VARIABLE}.`;
     }
   }
   if (!plan.steps.some((step) => step.expect?.body_contains))
@@ -300,7 +390,7 @@ def execute_step(step, variables, directory, index):
         raise ValueError("Unexpected HTTP failure (status %d)" % status)
     for name, pointer in step.get("save_json", {}).items():
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name) or name in VARIABLES:
-            raise ValueError("Extracted variables must have uppercase names distinct from operator variables")
+            raise ValueError("save_json variable name is invalid (must match [A-Z][A-Z0-9_]* and not reuse an operator variable): " + name)
         data = json.loads(body)
         for part in pointer.split("."):
             data = data[int(part)] if isinstance(data, list) else data[part]
@@ -309,7 +399,7 @@ def execute_step(step, variables, directory, index):
         variables[name] = str(data)
     for name, header in step.get("save_headers", {}).items():
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name) or name in VARIABLES:
-            raise ValueError("Extracted variables must have uppercase names distinct from operator variables")
+            raise ValueError("save_headers variable name is invalid (must match [A-Z][A-Z0-9_]* and not reuse an operator variable): " + name)
         values = []
         for line in pathlib.Path(str(prefix) + ".headers").read_text(errors="replace").splitlines():
             key, separator, value = line.partition(":")

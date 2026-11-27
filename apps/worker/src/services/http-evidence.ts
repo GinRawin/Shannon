@@ -48,6 +48,17 @@ export interface CaptureRedaction {
   placeholder: string;
 }
 
+/**
+ * Redaction placeholders that identify the operator rather than authenticate them. Report projections
+ * still redact these values, but reviewed replay assertions may name the operator's own account.
+ */
+const IDENTITY_REDACTION_PLACEHOLDERS = new Set(['$username', '$email']);
+
+/** Credential redactions only; identity values (username, email) are not plan-rejecting secrets. */
+export function credentialCaptureRedactions(redactions: readonly CaptureRedaction[]): CaptureRedaction[] {
+  return redactions.filter((item) => !IDENTITY_REDACTION_PLACEHOLDERS.has(item.placeholder));
+}
+
 /** Report projections redact configured login values; private trace files remain unchanged. */
 export function configuredCaptureRedactions(credentials?: Credentials): CaptureRedaction[] {
   if (!credentials) return [];
@@ -388,6 +399,38 @@ export async function loadPacketBackedFindingIds(dir: string): Promise<ReadonlyS
   return eligible;
 }
 
+/**
+ * XSS report IDs whose only trustworthy proof is a host browser receipt with no HTTP packet at all,
+ * such as a URL-fragment or DOM-only sink whose payload never reaches the server. They are
+ * report-eligible without a captured exchange, but only when the persisted receipt revalidates
+ * against this finding's own plan with empty capture sets on both sides.
+ */
+export async function loadBrowserBackedFindingIds(dir: string): Promise<ReadonlySet<string>> {
+  const taskToFinding = await loadTaskToFindingIds(dir);
+  const taskByFinding = new Map([...taskToFinding].map(([task, finding]) => [finding, task]));
+  const eligible = new Set<string>();
+  for (const entry of await loadReplayEntries(dir)) {
+    const reportId = entry.vulnerability_id;
+    if (!reportId || !reportId.startsWith('XSS-')) continue;
+    if (entry.http_evidence_ids?.length) continue;
+    // The receipt is written under the queue ID, so resolve it from the report ID before revalidating.
+    const taskId = taskByFinding.get(reportId);
+    if (!taskId) continue;
+    if (
+      await hasTrustedBrowserReplay({
+        deliverablesDir: dir,
+        findingId: taskId,
+        stage: entry.browser_verification?.stage,
+        plan: entry.browser_replay,
+        verification: entry.browser_verification,
+        httpCaptureIds: [],
+      })
+    )
+      eligible.add(reportId);
+  }
+  return eligible;
+}
+
 export async function attachHttpEvidence(
   findings: readonly AddFindingInput[],
   deliverablesDir: string,
@@ -398,20 +441,21 @@ export async function attachHttpEvidence(
   const capturesByTask = await loadExchanges(deliverablesDir);
   const entries = await loadReplayEntries(deliverablesDir);
   const entriesByFinding = new Map(entries.map((entry) => [entry.vulnerability_id, entry]));
+  const trustedBrowserReplay = new Map<string, boolean>();
   for (const finding of findings) {
+    if (!finding.finding_id.startsWith('XSS-')) continue;
     const taskId = taskByFinding.get(finding.finding_id);
     const entry = entriesByFinding.get(finding.finding_id);
-    if (
-      finding.finding_id.startsWith('XSS-') &&
-      !(await hasTrustedBrowserReplay({
-        deliverablesDir,
-        findingId: taskId ?? '',
-        plan: entry?.browser_replay,
-        verification: entry?.browser_verification,
-        stage: entry?.browser_verification?.stage,
-        httpCaptureIds: entry?.http_evidence_ids ?? [],
-      }))
-    )
+    const trusted = await hasTrustedBrowserReplay({
+      deliverablesDir,
+      findingId: taskId ?? '',
+      plan: entry?.browser_replay,
+      verification: entry?.browser_verification,
+      stage: entry?.browser_verification?.stage,
+      httpCaptureIds: entry?.http_evidence_ids ?? [],
+    });
+    trustedBrowserReplay.set(finding.finding_id, trusted);
+    if (!trusted)
       throw new Error(`Final report finding ${finding.finding_id} has no trusted browser execution receipt`);
   }
   const verifiedIds = new Set(
@@ -419,84 +463,99 @@ export async function attachHttpEvidence(
       .filter((entry) => entry.status === 'exploited' && hasVerifiedReplay(entry))
       .map((entry) => entry.vulnerability_id),
   );
-  return findings.map((finding) => {
-    const task = taskByFinding.get(finding.finding_id);
-    const captures = task ? (capturesByTask.get(task) ?? []) : [];
-    const entry = entriesByFinding.get(finding.finding_id);
-    const display = entry?.http_evidence_display ?? 'unreviewed';
-    if (
-      display === 'include' &&
-      (!entry?.http_evidence_ids?.length || captures.length !== entry.http_evidence_ids.length)
-    )
-      throw new Error(`Selected HTTP evidence is unavailable for ${finding.finding_id}`);
-    const complete = captures.some(
-      (capture) =>
-        !capture.errors.length &&
-        capture.exchanges.some((exchange) => exchange.request_base64 && exchange.response_base64),
-    );
-    if (display !== 'include' || !complete) {
-      throw new Error(`Final report finding ${finding.finding_id} has no complete captured HTTP request and response`);
-    }
-    const coverage: AdditionalSection = {
-      heading: '自动化重放覆盖',
-      items: [
-        {
-          kind: 'prose',
-          text: verifiedIds.has(finding.finding_id)
-            ? `此漏洞有通过宿主验证的 HTTP 影响断言，可使用 ${REPRODUCTION_SCRIPT_FILENAME} --verify ${finding.finding_id} 显式执行。普通命令复验与影响断言分别记录。`
-            : `此漏洞没有自动化影响断言。使用 ${REPRODUCTION_SCRIPT_FILENAME} --show ${finding.finding_id} 查看实际采集调用或人工复验步骤；命令执行完成不代表漏洞影响已自动验证。`,
-        },
-        {
-          kind: 'prose',
-          text: '已附上通过 HTTP 捕获工具记录的完整请求与响应。',
-        },
-      ],
-    };
-    return {
-      ...finding,
-      http_evidence_display: display,
-      ...(entry?.verification_method ? { verification_method: entry.verification_method } : {}),
-      additional_sections: [
-        ...(finding.additional_sections ?? []).filter(
-          (section) =>
-            !['捕获的 HTTP 请求与响应', '自动化重放覆盖', '浏览器验证证据', '验证证据', '证据选择'].includes(
-              section.heading,
-            ),
-        ),
-        ...(captures.length ? [httpSection(captures, redactions)] : []),
-        ...(entry &&
-        (display !== 'include' || entry.verification_method !== 'http') &&
-        (entry.proof_of_impact || entry.evidence_of_vulnerability)
-          ? [
-              {
-                heading: ['browser', 'mixed'].includes(entry.verification_method ?? '') ? '浏览器验证证据' : '验证证据',
-                items: evidenceMarkdownItems(
-                  [
-                    entry.proof_of_impact ?? entry.evidence_of_vulnerability ?? '',
-                    ...(entry.browser_verification
-                      ? [
-                          `Record browser assertion passed: ${entry.browser_verification.assertion_type}; expected “${entry.browser_verification.expected}”, observed “${entry.browser_verification.observed}”.`,
-                        ]
-                      : []),
-                    ...(entry.browser_evidence_files ?? []).map((file) => `浏览器证据文件：${file}`),
-                  ].join('\n\n'),
-                ).map((item) => {
-                  const mask = (value: string) =>
-                    redactions.reduce(
-                      (text, redaction) => text.split(redaction.value).join(redaction.placeholder),
-                      value,
-                    );
-                  return item.kind === 'prose'
-                    ? { ...item, text: mask(item.text) }
-                    : { ...item, block: { ...item.block, content: mask(item.block.content) } };
-                }),
-              },
-            ]
-          : []),
-        coverage,
-      ],
-    };
-  });
+  return await Promise.all(
+    findings.map(async (finding) => {
+      const task = taskByFinding.get(finding.finding_id);
+      const captures = task ? (capturesByTask.get(task) ?? []) : [];
+      const entry = entriesByFinding.get(finding.finding_id);
+      const display = entry?.http_evidence_display ?? 'unreviewed';
+      if (
+        display === 'include' &&
+        (!entry?.http_evidence_ids?.length || captures.length !== entry.http_evidence_ids.length)
+      )
+        throw new Error(`Selected HTTP evidence is unavailable for ${finding.finding_id}`);
+      const complete = captures.some(
+        (capture) =>
+          !capture.errors.length &&
+          capture.exchanges.some((exchange) => exchange.request_base64 && exchange.response_base64),
+      );
+      if (display !== 'include' || !complete) {
+        // A client-side XSS sink may be proven by the host browser receipt alone with no packet at all.
+        const browserOnly = trustedBrowserReplay.get(finding.finding_id) === true && !entry?.http_evidence_ids?.length;
+        if (!browserOnly)
+          throw new Error(
+            `Final report finding ${finding.finding_id} has no complete captured HTTP request and response`,
+          );
+      }
+      const coverage: AdditionalSection = {
+        heading: '自动化重放覆盖',
+        items: [
+          {
+            kind: 'prose',
+            text:
+              entry?.verification_method === 'browser' && entry.browser_verification
+                ? `此漏洞为纯客户端 XSS，由宿主浏览器断言（${entry.browser_verification.assertion_type}）验证 JavaScript 执行；无服务端 HTTP 影响断言。`
+                : verifiedIds.has(finding.finding_id)
+                  ? `此漏洞有通过宿主验证的 HTTP 影响断言，可使用 ${REPRODUCTION_SCRIPT_FILENAME} --verify ${finding.finding_id} 显式执行。普通命令复验与影响断言分别记录。`
+                  : `此漏洞没有自动化影响断言。使用 ${REPRODUCTION_SCRIPT_FILENAME} --show ${finding.finding_id} 查看实际采集调用或人工复验步骤；命令执行完成不代表漏洞影响已自动验证。`,
+          },
+          {
+            kind: 'prose',
+            text:
+              entry?.verification_method === 'browser' && !captures.length
+                ? '此漏洞未产生服务端 HTTP 往返；证据为宿主浏览器执行回执。'
+                : '已附上通过 HTTP 捕获工具记录的完整请求与响应。',
+          },
+        ],
+      };
+      return {
+        ...finding,
+        http_evidence_display: display,
+        ...(entry?.verification_method ? { verification_method: entry.verification_method } : {}),
+        additional_sections: [
+          ...(finding.additional_sections ?? []).filter(
+            (section) =>
+              !['捕获的 HTTP 请求与响应', '自动化重放覆盖', '浏览器验证证据', '验证证据', '证据选择'].includes(
+                section.heading,
+              ),
+          ),
+          ...(captures.length ? [httpSection(captures, redactions)] : []),
+          ...(entry &&
+          (display !== 'include' || entry.verification_method !== 'http') &&
+          (entry.proof_of_impact || entry.evidence_of_vulnerability)
+            ? [
+                {
+                  heading: ['browser', 'mixed'].includes(entry.verification_method ?? '')
+                    ? '浏览器验证证据'
+                    : '验证证据',
+                  items: evidenceMarkdownItems(
+                    [
+                      entry.proof_of_impact ?? entry.evidence_of_vulnerability ?? '',
+                      ...(entry.browser_verification
+                        ? [
+                            `Record browser assertion passed: ${entry.browser_verification.assertion_type}; expected “${entry.browser_verification.expected}”, observed “${entry.browser_verification.observed}”.`,
+                          ]
+                        : []),
+                      ...(entry.browser_evidence_files ?? []).map((file) => `浏览器证据文件：${file}`),
+                    ].join('\n\n'),
+                  ).map((item) => {
+                    const mask = (value: string) =>
+                      redactions.reduce(
+                        (text, redaction) => text.split(redaction.value).join(redaction.placeholder),
+                        value,
+                      );
+                    return item.kind === 'prose'
+                      ? { ...item, text: mask(item.text) }
+                      : { ...item, block: { ...item.block, content: mask(item.block.content) } };
+                  }),
+                },
+              ]
+            : []),
+          coverage,
+        ],
+      };
+    }),
+  );
 }
 
 export async function writeReproductionScript(

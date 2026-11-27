@@ -63,6 +63,8 @@ import { executeGitCommandWithRetry } from '../services/git-manager.js';
 import {
   attachHttpEvidence,
   configuredCaptureRedactions,
+  credentialCaptureRedactions,
+  loadBrowserBackedFindingIds,
   loadPacketBackedFindingIds,
   writeReproductionScript,
 } from '../services/http-evidence.js';
@@ -1443,7 +1445,7 @@ export async function runMiscellaneousExploitAgent(input: ActivityInput): Promis
 
 export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics> {
   const { createRecordCollector } = await import('../collectors/record-collector.js');
-  const { verifyHttpReplay } = await import('../services/http-replay.js');
+  const { credentialReplayVariableValues, verifyHttpReplay } = await import('../services/http-replay.js');
   const classes: ReconciliationClass[] = ['injection', 'xss', 'auth', 'ssrf', 'authz', 'miscellaneous'];
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   // A resumed pending report can lack the outputs normally created before record.
@@ -1496,7 +1498,11 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
   const container = getOrCreateContainer(input.workflowId, buildSessionMetadata(input), buildContainerConfig(input));
   const config = await container.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
   if (isErr(config)) throw deterministicActivityFailure(config.error, 'ConfigurationError');
-  const captureRedactions = configuredCaptureRedactions(config.value?.authentication?.credentials);
+  // Identity values (username/email) are operator-owned and intentionally NOT treated as secrets, so
+  // they survive into replay plans, reproduce.sh and the internal report; credentials still mask.
+  const captureRedactions = credentialCaptureRedactions(
+    configuredCaptureRedactions(config.value?.authentication?.credentials),
+  );
   const verificationPlans = new Map<string, import('../services/http-replay.js').HttpReplayPlan>();
   const browserPlans = new Map<string, BrowserReplayPlan>();
   const exploitContext: Array<{ finding_id: string; exploit_log_path: string }> = [];
@@ -1628,7 +1634,7 @@ export async function runRecordAgent(input: ActivityInput): Promise<AgentMetrics
         targetUrl: input.webUrl,
         secrets: [
           ...captureRedactions.map((item) => item.value),
-          ...Object.values(resolution.values).filter((value) => value !== new URL(input.webUrl).origin),
+          ...credentialReplayVariableValues(resolution.values, input.webUrl),
         ],
       });
     },
@@ -2429,7 +2435,7 @@ export async function runRecordFailureReviewAgent(input: ActivityInput): Promise
 export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMetrics> {
   type RecordVerdict = import('../collectors/record-collector.js').RecordVerdict;
   const { createRecordCollector } = await import('../collectors/record-collector.js');
-  const { verifyHttpReplay } = await import('../services/http-replay.js');
+  const { credentialReplayVariableValues, verifyHttpReplay } = await import('../services/http-replay.js');
   const dir = deliverablesDir(input.repoPath, input.deliverablesSubdir);
   const reviews = (await loadExploitReviews(dir)).filter((review) => review.verdict === 'retry');
   if (!reviews.length)
@@ -2462,7 +2468,7 @@ export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMe
       ? { OTP: { value: credentials.email_login.totp_secret, kind: 'totp' as const, refresh: 'each_attempt' as const } }
       : {}),
   };
-  const redactions = configuredCaptureRedactions(credentials);
+  const redactions = credentialCaptureRedactions(configuredCaptureRedactions(credentials));
   const validIds = new Set(reviews.map((review) => review.finding_id));
   const xssFindingIds = new Set([...validIds].filter((id) => id.startsWith('XSS-')));
   const plans = new Map(
@@ -2550,7 +2556,7 @@ export async function runRecordRetryStage(input: ActivityInput): Promise<AgentMe
         targetUrl: input.webUrl,
         secrets: [
           ...redactions.map((item) => item.value),
-          ...Object.values(resolution.values).filter((value) => value !== new URL(input.webUrl).origin),
+          ...credentialReplayVariableValues(resolution.values, input.webUrl),
         ],
       });
     },
@@ -2892,8 +2898,11 @@ export async function runReportAgent(input: ActivityInput, exploit: boolean): Pr
       ) as unknown;
       if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new Error('invalid finding allowlist');
       const packetBackedIds = await loadPacketBackedFindingIds(deliverablesPath);
+      const browserBackedIds = await loadBrowserBackedFindingIds(deliverablesPath);
       const admittedIds = await loadRecordReportFindingIds(deliverablesPath);
-      verifiedFindingIds = new Set((ids as string[]).filter((id) => packetBackedIds.has(id) && admittedIds.has(id)));
+      verifiedFindingIds = new Set(
+        (ids as string[]).filter((id) => (packetBackedIds.has(id) || browserBackedIds.has(id)) && admittedIds.has(id)),
+      );
     } catch (error) {
       throw ApplicationFailure.nonRetryable(
         error instanceof Error
@@ -2915,7 +2924,9 @@ export async function runReportAgent(input: ActivityInput, exploit: boolean): Pr
     input.configYAML,
   );
   if (isErr(evidenceConfig)) throw deterministicActivityFailure(evidenceConfig.error, 'ConfigurationError');
-  const captureRedactions = configuredCaptureRedactions(evidenceConfig.value?.authentication?.credentials);
+  const captureRedactions = credentialCaptureRedactions(
+    configuredCaptureRedactions(evidenceConfig.value?.authentication?.credentials),
+  );
 
   const writeDeliverable = async (deliverablesPath: string, execution: { readonly model?: string }): Promise<void> => {
     const logger = createActivityLogger();
